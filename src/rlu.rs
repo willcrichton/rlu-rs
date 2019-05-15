@@ -15,28 +15,31 @@ use std::{thread, time};
 const RLU_MAX_LOG_SIZE: usize = 32;
 const RLU_MAX_THREADS: usize = 32;
 
-#[derive(Default, Clone, Copy)]
 pub struct ObjOriginal<T> {
   copy: Option<*mut ObjCopy<T>>,
   data: T,
 }
 
-#[derive(Clone, Copy)]
 pub struct ObjCopy<T> {
   thread_id: usize,
   original: RluObject<T>,
   data: T,
 }
 
-#[derive(Clone, Copy)]
 enum RluObjType<T> {
   Original(ObjOriginal<T>),
   Copy(ObjCopy<T>),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct RluObject<T>(*mut RluObjType<T>);
 
+impl<T> Clone for RluObject<T> {
+  fn clone(&self) -> Self {
+    *self
+  }
+}
+impl<T> Copy for RluObject<T> {}
 unsafe impl<T> Send for RluObject<T> {}
 unsafe impl<T> Sync for RluObject<T> {}
 
@@ -66,7 +69,7 @@ impl<T: Default> Default for ObjCopy<T> {
   }
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default)]
 struct WriteLog<T> {
   entries: [ObjCopy<T>; RLU_MAX_LOG_SIZE],
   num_entries: usize,
@@ -136,8 +139,6 @@ impl<T: RluBounds> Rlu<T> {
         copy: None,
         data,
       }))));
-
-    //println!("Alloc: {:p}", obj.0);
 
     obj
   }
@@ -262,7 +263,7 @@ impl<'a, T: RluBounds> Drop for RluSession<'a, T> {
 impl<T: RluBounds> RluThread<T> {
   fn new() -> RluThread<T> {
     RluThread {
-      logs: [WriteLog::default(); 2],
+      logs: Default::default(),
       current_log: 0,
       is_writer: false,
       write_clock: usize::MAX,

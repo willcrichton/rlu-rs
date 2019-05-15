@@ -4,7 +4,7 @@ use crate::rlu::{Rlu, RluBounds, RluSession, RluObject};
 use std::ptr;
 use std::sync::Arc;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct RluListNode<T> {
   data: T,
   next: Option<RluObject<RluListNode<T>>>,
