@@ -1,13 +1,14 @@
 #![allow(unused_imports, dead_code, unused_variables)]
 
 use std::cell::RefCell;
+use std::cell::UnsafeCell;
 use std::fmt::Debug;
 use std::mem::transmute;
+use std::ops::{Deref, DerefMut};
 use std::ptr;
 use std::sync::atomic::{compiler_fence, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::usize;
-use std::cell::UnsafeCell;
 
 const RLU_MAX_LOG_SIZE: usize = 32;
 const RLU_MAX_THREADS: usize = 32;
@@ -21,7 +22,7 @@ pub struct ObjOriginal<T> {
 #[derive(Clone, Copy)]
 pub struct ObjCopy<T> {
   thread_id: usize,
-  original: *mut ObjOriginal<T>,
+  original: RluObject<T>,
   data: T,
 }
 
@@ -32,13 +33,28 @@ unsafe impl<T> Send for ObjCopy<T> {}
 unsafe impl<T> Sync for ObjCopy<T> {}
 
 #[derive(Clone, Copy)]
-pub enum RluObject<T> {
+enum RluObjType<T> {
   Original(ObjOriginal<T>),
   Copy(ObjCopy<T>),
 }
 
-pub struct RluCell<T> {
-  cell: UnsafeCell<RluObject<T>>
+#[derive(Debug, Clone, Copy)]
+pub struct RluObject<T>(*mut RluObjType<T>);
+
+impl<T> RluObject<T> {
+  fn deref(&self) -> &RluObjType<T> {
+    unsafe { &*self.0 }
+  }
+
+  fn deref_mut(&mut self) -> &mut RluObjType<T> {
+    unsafe { &mut *self.0 }
+  }
+}
+
+impl<T> Default for RluObject<T> {
+  fn default() -> Self {
+    RluObject(ptr::null_mut())
+  }
 }
 
 impl<T: Default> Default for ObjCopy<T> {
@@ -46,7 +62,7 @@ impl<T: Default> Default for ObjCopy<T> {
     ObjCopy {
       thread_id: 0,
       data: T::default(),
-      original: ptr::null_mut(),
+      original: RluObject::default(),
     }
   }
 }
@@ -113,26 +129,33 @@ impl<T: RluBounds> Rlu<T> {
 
   pub fn alloc(&self, data: T) -> RluObject<T> {
     // TODO: save object pointer to deallocate on Drop
-    RluObject::Original(ObjOriginal { copy: None, data })
+    let obj = RluObject(Box::into_raw(Box::new(RluObjType::Original(ObjOriginal {
+      copy: None,
+      data,
+    }))));
+
+    //println!("Alloc: {:p}", obj.0);
+
+    obj
   }
 }
 
 macro_rules! log {
   ($self:expr, $e:expr) => {
     let s: String = $e.into();
-    if false {
+    if true {
       println!("Thread {}: {}", $self.thread_id, s);
     }
   };
 }
 
 impl<'a, T: RluBounds> RluGuard<'a, T> {
-  pub fn dereference<'b>(&mut self, obj: &'b RluObject<T>) -> &'b T {
+  pub fn dereference(&mut self, obj: RluObject<T>) -> *const T {
     log!(self.0, "dereference");
     let global = unsafe { &*self.0.global };
-    match obj {
-      RluObject::Copy(ref copy) => &copy.data,
-      RluObject::Original(ref orig) => match orig.copy {
+    match obj.deref() {
+      RluObjType::Copy(copy) => &copy.data as *const T,
+      RluObjType::Original(orig) => match orig.copy {
         None => &orig.data,
         Some(copy) => {
           let copy = unsafe { &*copy };
@@ -151,33 +174,36 @@ impl<'a, T: RluBounds> RluGuard<'a, T> {
     }
   }
 
-  pub fn try_lock(&mut self, obj: &mut RluObject<T>) -> Option<*mut T> {
-    log!(self.0, "try_lock");
+  pub fn try_lock(&mut self, mut obj: RluObject<T>) -> Option<*mut T> {
+    log!(self.0, format!("try_lock on {:p}", obj.0));
     let global = unsafe { &*self.0.global };
     self.0.is_writer = true;
-    let orig = match obj {
-      RluObject::Original(ref mut orig) => match orig.copy {
+    let mut orig = match obj.deref_mut() {
+      RluObjType::Original(orig) => match orig.copy {
         Some(copy) => {
           let copy = unsafe { &mut *copy };
           if self.0.thread_id == copy.thread_id {
-            return Some(&mut copy.data);
+            return Some(&mut copy.data as *mut T);
           } else {
             self.0.abort();
             return None;
           }
         }
-        None => orig,
+        None => obj,
       },
 
-      RluObject::Copy(copy) => unsafe { &mut *copy.original },
+      RluObjType::Copy(copy) => copy.original,
     };
 
     let copy = self.0.active_log.next_entry();
     copy.thread_id = self.0.thread_id;
-    copy.original = orig as *mut ObjOriginal<T>;
-    copy.data = orig.data;
-
-    orig.copy = Some(copy as *mut ObjCopy<T>);
+    copy.original = orig;
+    if let RluObjType::Original(ref mut orig) = orig.deref_mut() {
+      copy.data = orig.data;
+      orig.copy = Some(copy);
+    } else {
+      unreachable!()
+    };
 
     Some(&mut copy.data as *mut T)
   }
@@ -188,13 +214,14 @@ impl<'a, T: RluBounds> RluGuard<'a, T> {
 
   pub fn assign_ptr(
     &self,
-    ptr: &mut *mut RluObject<T>,
-    obj: &mut RluObject<T>,
+    ptr: &mut RluObject<T>,
+    obj: RluObject<T>,
   ) {
-    // *ptr = &mut (match obj {
-    //   RluObject::Original(orig) => *obj,
-    //   RluObject::Copy(copy) => unsafe { *copy.original }
-    // }) as *mut T;
+    log!(self.0, format!("assigning to {:?}", obj));
+    *ptr = match obj.deref() {
+      RluObjType::Original(_) => obj,
+      RluObjType::Copy(copy) => copy.original
+    };
   }
 }
 
@@ -245,8 +272,10 @@ impl<T: RluBounds> RluThread<T> {
     for i in 0..self.active_log.num_entries {
       let copy = &mut self.active_log.entries[i];
       log!(self, format!("copy {:?}", copy.data));
-      unsafe {
-        (*copy.original).data = copy.data;
+      if let RluObjType::Original(ref mut orig) = copy.original.deref_mut() {
+        orig.data = copy.data;
+      } else {
+        unreachable!()
       }
     }
   }
@@ -254,8 +283,12 @@ impl<T: RluBounds> RluThread<T> {
   fn unlock_write_log(&mut self) {
     log!(self, "unlock_write_log");
     for i in 0..self.active_log.num_entries {
-      unsafe {
-        (*self.active_log.entries[i].original).copy = None;
+      if let RluObjType::Original(ref mut orig) =
+        self.active_log.entries[i].original.deref_mut()
+      {
+        orig.copy = None;
+      } else {
+        unreachable!()
       }
     }
   }

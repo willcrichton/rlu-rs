@@ -17,14 +17,16 @@ fn basic() {
 
     // Object should have original value after first deref
     {
-      let n = lock.dereference(&obj);
-      assert_eq!(*n, 3);
+      let n = lock.dereference(obj);
+      unsafe {
+        assert_eq!(*n, 3);
+      }
     }
 
     // Object should still have same value, but now it's safe to write
     // We should have a copy at this point
     {
-      let n = lock.try_lock(&mut obj).unwrap();
+      let n = lock.try_lock(obj).unwrap();
       unsafe {
         assert_eq!(*n, 3);
         *n += 1;
@@ -34,8 +36,10 @@ fn basic() {
     // Subsequent derefs in same thread should refer to the copy, observing
     // the new value
     {
-      let n = lock.dereference(&obj);
-      assert_eq!(*n, 4);
+      let n = lock.dereference(obj);
+      unsafe {
+        assert_eq!(*n, 4);
+      }
     }
   }
 
@@ -45,8 +49,10 @@ fn basic() {
 
     // Read should observed flushed change
     {
-      let n = lock.dereference(&obj);
-      assert_eq!(*n, 4);
+      let n = lock.dereference(obj);
+      unsafe {
+        assert_eq!(*n, 4);
+      }
     }
   }
 }
@@ -64,13 +70,15 @@ fn concurrent_reader_writer() {
     let mut lock0 = thread0.lock();
 
     {
-      let n1: &u64 = lock0.dereference(&obj);
-      assert_eq!(*n1, 3);
+      let n1: *const u64 = lock0.dereference(obj);
+      unsafe {
+        assert_eq!(*n1, 3);
+      }
     }
 
     // Thread 1 should be working on a copy
     {
-      let n2: *mut u64 = lock1.try_lock(&mut obj).unwrap();
+      let n2: *mut u64 = lock1.try_lock(obj).unwrap();
       unsafe {
         assert_eq!(*n2, 3);
         *n2 += 1;
@@ -79,15 +87,19 @@ fn concurrent_reader_writer() {
 
     // Thread 0 should be working on the original
     {
-      let n1: &u64 = lock0.dereference(&obj);
-      assert_eq!(*n1, 3);
+      let n1: *const u64 = lock0.dereference(obj);
+      unsafe {
+        assert_eq!(*n1, 3);
+      }
     }
 
     // Thread 0 exits, allowing thread 1 to flush writes
   }
 
   let mut lock = thread0.lock();
-  assert_eq!(*lock.dereference(&obj), 4);
+  unsafe {
+    assert_eq!(*lock.dereference(obj), 4);
+  }
 }
 
 // #[test]
@@ -101,7 +113,7 @@ fn concurrent_reader_writer() {
 //     let thread0 = rlu1.make_thread();
 //     thread0.reader_lock(&rlu1);
 
-//     let n2: &mut u64 = thread0.try_lock(&rlu, &mut obj1).unwrap();
+//     let n2: &mut u64 = thread0.try_lock(&rlu, obj1).unwrap();
 //     assert_eq!(*n2, 3);
 //     *n2 += 1;
 
