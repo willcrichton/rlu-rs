@@ -1,5 +1,5 @@
-mod rlu;
 mod linkedlist;
+mod rlu;
 
-pub use crate::rlu::*;
 pub use crate::linkedlist::*;
+pub use crate::rlu::*;

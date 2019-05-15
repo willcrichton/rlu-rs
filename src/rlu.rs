@@ -75,7 +75,6 @@ struct WriteLog<T> {
   num_entries: usize,
 }
 
-
 pub struct RluThread<T> {
   logs: [WriteLog<T>; 2],
   current_log: usize,
@@ -113,8 +112,8 @@ impl<T: RluBounds> Rlu<T> {
   pub fn new() -> Rlu<T> {
     Rlu {
       global_clock: AtomicUsize::new(0),
-      threads: Default::default(),
       num_threads: AtomicUsize::new(0),
+      threads: Default::default(),
     }
   }
 
@@ -353,7 +352,6 @@ impl<T: RluBounds> RluThread<T> {
 
       let thread = &global.threads[i];
       loop {
-
         log!(self, format!("wait on thread {}: rc {}, counter {}, write clock {}, local clock {}", i, run_counts[i], thread.run_counter, self.write_clock, thread.local_clock));
         // thread::sleep(time::Duration::from_millis(10));
 
@@ -387,7 +385,6 @@ impl<T: RluBounds> RluThread<T> {
     &mut self.logs[(self.current_log + 1) % 2]
   }
 }
-
 
 impl<T: RluBounds> Default for RluThread<T> {
   fn default() -> Self {

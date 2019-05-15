@@ -1,7 +1,7 @@
 //extern crate rand;
 
-use std::sync::Arc;
 use rlu::{Rlu, RluList, RluListNode};
+use std::sync::Arc;
 use std::thread;
 
 //use rand::{thread_rng, Rng};
@@ -21,7 +21,6 @@ fn ll_simple() {
       assert!(ll.insert(&mut lock, 2).is_some());
       println!("Ins 0: {}", ll.to_string(&mut lock));
     }
-
 
     {
       let mut lock = thread.lock();
@@ -62,11 +61,12 @@ fn ll_simple() {
   }
 }
 
-
 #[test]
 fn ll_thread() {
   let rlu: Arc<Rlu<RluListNode<usize>>> = Arc::new(Rlu::new());
   let ll = RluList::new(rlu);
+
+  // TODO: concurrency test
 
   let reader = || {
     let mut ll = ll.clone();
@@ -81,8 +81,6 @@ fn ll_thread() {
 
   let writer = || {
     let mut ll = ll.clone();
-    thread::spawn(move || {
-
-    });
+    thread::spawn(move || {});
   };
 }

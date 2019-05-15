@@ -1,8 +1,8 @@
 #![allow(unused_mut, unused_variables, unused_imports)]
 
-use std::{thread, time};
 use std::sync::mpsc;
 use std::sync::Arc;
+use std::{thread, time};
 
 use rlu::Rlu;
 
@@ -112,7 +112,7 @@ fn thread() {
     thread::spawn(move || {
       let thr = rlu.make_thread();
 
-      for _ in 0 .. 100 {
+      for _ in 0..100 {
         let mut lock = thr.lock();
         let n = lock.dereference(obj);
         let x = unsafe { *n };
@@ -127,11 +127,13 @@ fn thread() {
     thread::spawn(move || {
       let thr = rlu.make_thread();
 
-      for _ in 0 .. 1000 {
+      for _ in 0..1000 {
         let mut lock = thr.lock();
         loop {
           if let Some(n) = lock.try_lock(obj) {
-            unsafe { *n += 1; }
+            unsafe {
+              *n += 1;
+            }
             break;
           }
         }

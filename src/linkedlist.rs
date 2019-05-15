@@ -58,7 +58,7 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
   fn find_lock<'a>(
     &self,
     lock: &mut RluSession<'a, RluListNode<T>>,
-    value: T
+    value: T,
   ) -> Option<(
     Option<(RluObject<RluListNode<T>>, *mut RluListNode<T>)>,
     Option<(RluObject<RluListNode<T>>, *mut RluListNode<T>)>,
@@ -123,7 +123,7 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
     loop {
       let (prev_opt2, next_opt2) = match self.find_lock(lock, value) {
         None => (None, None),
-        Some(opts) => opts
+        Some(opts) => opts,
       };
 
       if let None = prev_opt2 {
@@ -201,8 +201,10 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
         if unsafe { (*next_node).value } != value {
           return None;
         }
-      },
-      None => { return None; }
+      }
+      None => {
+        return None;
+      }
     };
 
     if let Some((prev, prev_node)) = prev_opt {
@@ -232,7 +234,10 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
     Some(())
   }
 
-  pub fn to_string<'a>(&self, lock: &mut RluSession<'a, RluListNode<T>>) -> String {
+  pub fn to_string<'a>(
+    &self,
+    lock: &mut RluSession<'a, RluListNode<T>>,
+  ) -> String {
     let mut cur = &unsafe { (*lock.dereference(self.head)).next };
     let mut s = String::new();
 
@@ -251,5 +256,4 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
 
     return s;
   }
-
 }
