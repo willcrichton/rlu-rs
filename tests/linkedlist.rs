@@ -1,5 +1,10 @@
+//extern crate rand;
+
 use std::sync::Arc;
 use rlu::{Rlu, RluList, RluListNode};
+use std::thread;
+
+//use rand::{thread_rng, Rng};
 
 #[test]
 fn ll_simple() {
@@ -11,42 +16,73 @@ fn ll_simple() {
   {
     {
       let mut lock = thread.lock();
-      ll.insert(&mut lock, 2, 0);
+      assert!(ll.contains(&mut lock, 0).is_none());
+      assert!(ll.delete(&mut lock, 0).is_none());
+      assert!(ll.insert(&mut lock, 2).is_some());
+      println!("Ins 0: {}", ll.to_string(&mut lock));
     }
-    println!("Ins 0");
+
 
     {
       let mut lock = thread.lock();
-      ll.insert(&mut lock, 0, 0);
-      ll.insert(&mut lock, 1, 1);
+      assert!(ll.insert(&mut lock, 0).is_some());
+      assert!(ll.insert(&mut lock, 1).is_some());
+      println!("Ins 1: {}", ll.to_string(&mut lock));
     }
-    println!("Ins 1");
 
     {
       let mut lock = thread.lock();
       for i in 0..=2 {
-        assert_eq!(ll.get(&mut lock, i).expect("Get failed"), i);
+        assert!(ll.contains(&mut lock, i).is_some());
       }
+
+      assert!(ll.contains(&mut lock, 5).is_none());
+      println!("Contains");
     }
 
     {
       let mut lock = thread.lock();
-      ll.delete(&mut lock, 1);
-    }
-    println!("Del 1");
-
-    {
-      let mut lock = thread.lock();
-      assert_eq!(ll.get(&mut lock, 1).expect("Get failed"), 2);
+      assert!(ll.delete(&mut lock, 1).is_some());
+      println!("Del 1: {}", ll.to_string(&mut lock));
     }
 
     {
       let mut lock = thread.lock();
-      ll.delete(&mut lock, 0);
-      assert_eq!(ll.get(&mut lock, 0).expect("Get failed"), 2);
-
-      ll.delete(&mut lock, 0);
+      assert!(ll.contains(&mut lock, 1).is_none());
     }
-    println!("Del 2");
+
+    {
+      let mut lock = thread.lock();
+      assert!(ll.delete(&mut lock, 0).is_some());
+      assert!(ll.contains(&mut lock, 0).is_none());
+
+      assert!(ll.delete(&mut lock, 2).is_some());
+      println!("Del 2: {}", ll.to_string(&mut lock));
+    }
   }
+}
+
+
+#[test]
+fn ll_thread() {
+  let rlu: Arc<Rlu<RluListNode<usize>>> = Arc::new(Rlu::new());
+  let ll = RluList::new(rlu);
+
+  let reader = || {
+    let mut ll = ll.clone();
+    thread::spawn(move || {
+      // let mut rng = thread_rng();
+      // for _ in 0 .. 100 {
+      //   let i = rng.gen_range(0, 50) * 2;
+      //   assert!(ll.contains(i).is_some());
+      // }
+    })
+  };
+
+  let writer = || {
+    let mut ll = ll.clone();
+    thread::spawn(move || {
+
+    });
+  };
 }

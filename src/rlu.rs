@@ -363,6 +363,8 @@ impl<T: RluBounds> RluThread<T> {
         {
           break;
         }
+
+        thread::yield_now();
       }
     }
   }
