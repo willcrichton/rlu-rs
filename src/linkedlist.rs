@@ -1,6 +1,6 @@
 #![allow(unused_mut, unused_variables, unused_assignments, dead_code)]
 
-use crate::rlu::{Rlu, RluBounds, RluGuard, RluObject};
+use crate::rlu::{Rlu, RluBounds, RluSession, RluObject};
 use std::ptr;
 use std::sync::Arc;
 
@@ -22,7 +22,7 @@ impl<T: RluBounds> RluList<T> {
 
   fn nth<'a>(
     &self,
-    lock: &mut RluGuard<'a, RluListNode<T>>,
+    lock: &mut RluSession<'a, RluListNode<T>>,
     index: usize,
   ) -> (
     Option<RluObject<RluListNode<T>>>,
@@ -49,7 +49,7 @@ impl<T: RluBounds> RluList<T> {
 
   fn nth_lock<'a>(
     &self,
-    lock: &mut RluGuard<'a, RluListNode<T>>,
+    lock: &mut RluSession<'a, RluListNode<T>>,
     index: usize,
   ) -> (
     Option<(RluObject<RluListNode<T>>, *mut RluListNode<T>)>,
@@ -91,7 +91,7 @@ impl<T: RluBounds> RluList<T> {
 
   pub fn get<'a>(
     &self,
-    lock: &mut RluGuard<'a, RluListNode<T>>,
+    lock: &mut RluSession<'a, RluListNode<T>>,
     index: usize,
   ) -> Option<T> {
     let mut i = 0;
@@ -101,7 +101,7 @@ impl<T: RluBounds> RluList<T> {
 
   pub fn insert<'a>(
     &mut self,
-    lock: &mut RluGuard<'a, RluListNode<T>>,
+    lock: &mut RluSession<'a, RluListNode<T>>,
     data: T,
     index: usize,
   ) {
@@ -133,7 +133,7 @@ impl<T: RluBounds> RluList<T> {
 
   pub fn delete<'a>(
     &mut self,
-    lock: &mut RluGuard<'a, RluListNode<T>>,
+    lock: &mut RluSession<'a, RluListNode<T>>,
     index: usize,
   ) {
     let (prev_opt, next_opt) = self.nth_lock(lock, index);

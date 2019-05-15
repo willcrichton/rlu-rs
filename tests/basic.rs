@@ -1,6 +1,6 @@
 #![allow(unused_mut, unused_variables, unused_imports)]
 
-use std::thread;
+use std::{thread, time};
 use std::sync::mpsc;
 use std::sync::Arc;
 
@@ -58,7 +58,7 @@ fn basic() {
 }
 
 #[test]
-fn concurrent_reader_writer() {
+fn overlapping_reader_writer() {
   let rlu: Arc<Rlu<u64>> = Arc::new(Rlu::new());
   let mut obj = rlu.alloc(3);
 
@@ -102,21 +102,55 @@ fn concurrent_reader_writer() {
   }
 }
 
-// #[test]
-// fn thread() {
-//   let rlu: Arc<Rlu<u64>> = Arc::new(Rlu::new());
-//   let mut obj1 = RluObject::new(3);
-//   let mut obj2 = RluObject::new(5);
+#[test]
+fn thread() {
+  let rlu: Arc<Rlu<u64>> = Arc::new(Rlu::new());
+  let mut obj = rlu.alloc(0);
 
-//   let rlu1 = rlu.clone();
-//   let t0 = thread::spawn(move || {
-//     let thread0 = rlu1.make_thread();
-//     thread0.reader_lock(&rlu1);
+  let reader = || {
+    let rlu = rlu.clone();
+    thread::spawn(move || {
+      let thr = rlu.make_thread();
 
-//     let n2: &mut u64 = thread0.try_lock(&rlu, obj1).unwrap();
-//     assert_eq!(*n2, 3);
-//     *n2 += 1;
+      for _ in 0 .. 100 {
+        let mut lock = thr.lock();
+        let n = lock.dereference(obj);
+        let x = unsafe { *n };
+        thread::sleep(time::Duration::from_millis(10));
+        assert_eq!(unsafe { *n }, x);
+      }
+    })
+  };
 
-//     thread0.reader_unlock(&rlu);
-//   });
-// }
+  let writer = || {
+    let rlu = rlu.clone();
+    thread::spawn(move || {
+      let thr = rlu.make_thread();
+
+      for _ in 0 .. 1000 {
+        let mut lock = thr.lock();
+        loop {
+          if let Some(n) = lock.try_lock(obj) {
+            unsafe { *n += 1; }
+            break;
+          }
+        }
+      }
+    })
+  };
+
+  let readers: Vec<_> = (0..16).map(|_| reader()).collect();
+  let writers: Vec<_> = (0..1).map(|_| writer()).collect();
+
+  for t in readers {
+    t.join().expect("Reader panicked");
+  }
+
+  for t in writers {
+    t.join().expect("Writer panicked");
+  }
+
+  let thr = rlu.make_thread();
+  let mut lock = thr.lock();
+  assert_eq!(unsafe { *lock.dereference(obj) }, 1000);
+}
