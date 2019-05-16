@@ -1,10 +1,10 @@
-//extern crate rand;
+extern crate rand;
 
 use rlu::{Rlu, RluList, RluListNode};
 use std::sync::Arc;
 use std::thread;
 
-//use rand::{thread_rng, Rng};
+use rand::{thread_rng, Rng};
 
 #[test]
 fn ll_simple() {
@@ -71,11 +71,11 @@ fn ll_thread() {
   let reader = || {
     let mut ll = ll.clone();
     thread::spawn(move || {
-      // let mut rng = thread_rng();
-      // for _ in 0 .. 100 {
-      //   let i = rng.gen_range(0, 50) * 2;
-      //   assert!(ll.contains(i).is_some());
-      // }
+      let mut rng = thread_rng();
+      for _ in 0..100 {
+        let i = rng.gen_range(0, 50) * 2;
+        assert!(ll.contains(i).is_some());
+      }
     })
   };
 
