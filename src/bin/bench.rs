@@ -15,7 +15,7 @@ struct BenchOpts {
   num_threads: usize,
   initial_size: usize,
   range: usize,
-  num_ops: usize,
+  timeout: u128,
   write_frac: f64,
   insert_frac: f64,
 }
@@ -24,14 +24,20 @@ fn ll_readwrite(
   ll: RluList<usize>,
   rlu: Arc<Rlu<RluListNode<usize>>>,
   opts: BenchOpts,
-) {
+) -> usize {
   let worker = || {
     let rlu = rlu.clone();
     let mut ll = ll.clone();
+
     thread::spawn(move || {
       let mut rng = thread_rng();
+      let mut ops = 0;
+      let start = Instant::now();
+      loop {
+        if start.elapsed().as_millis() >= opts.timeout {
+          break;
+        }
 
-      for _ in 0..opts.num_ops {
         let i = rng.gen_range(0, opts.range);
         if rng.gen::<f64>() > opts.write_frac {
           black_box(ll.contains(i));
@@ -42,14 +48,16 @@ fn ll_readwrite(
             black_box(ll.delete(i));
           }
         }
+
+        ops += 1;
       }
+
+      ops
     })
   };
 
   let threads: Vec<_> = (0..opts.num_threads).map(|_| worker()).collect();
-  for t in threads {
-    t.join().unwrap();
-  }
+  threads.into_iter().map(|t| t.join().unwrap()).sum()
 }
 
 fn benchmark() {
@@ -61,10 +69,10 @@ fn benchmark() {
         insert_frac: 0.5,
         initial_size: 256,
         range: 512,
-        num_ops: 10000,
+        timeout: 2000,
       };
 
-      let times: Vec<_> = (0..5).map(|_| {
+      let ops: Vec<_> = (0..3).map(|_| {
         let rlu: Arc<Rlu<RluListNode<usize>>> = Arc::new(Rlu::new());
         let mut ll = RluList::new(rlu.clone());
 
@@ -77,15 +85,13 @@ fn benchmark() {
           }
         }
 
-        let now = Instant::now();
-        ll_readwrite(ll, rlu, opts);
-        now.elapsed().as_micros()
+        ll_readwrite(ll, rlu, opts)
       }).collect();
 
-      let avg: f64 = (times.iter().sum::<u128>() as f64) / (times.len() as f64);
-      let throughput = (opts.num_ops * opts.num_threads) as f64 / avg;
+      let avg: f64 = (ops.iter().sum::<usize>() as f64) / (ops.len() as f64);
+      let throughput = avg / ((opts.timeout * 1000) as f64) ;
 
-      println!("micros: {}", avg);
+      println!("ops: {:.0}, throughput: {:.3}", avg, throughput);
       println!("{},{},{}", write_frac, num_threads, throughput);
     }
   }
