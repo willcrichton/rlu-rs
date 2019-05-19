@@ -4,59 +4,52 @@ use rlu::{Rlu, RluList, RluListNode};
 use std::sync::Arc;
 use std::thread;
 
-use rand::{thread_rng, Rng};
+use rand::{random, thread_rng, Rng};
 
 #[test]
 fn ll_simple() {
   let rlu: Arc<Rlu<RluListNode<usize>>> = Arc::new(Rlu::new());
-  let rlu2 = rlu.clone();
   let thread = rlu.make_thread();
-  let mut ll = RluList::new(rlu2);
+  let mut ll = RluList::new(rlu.clone());
 
   {
     {
-      let mut lock = thread.lock();
-      assert!(ll.contains(&mut lock, 0).is_none());
-      assert!(ll.delete(&mut lock, 0).is_none());
-      assert!(ll.insert(&mut lock, 2).is_some());
-      println!("Ins 0: {}", ll.to_string(&mut lock));
+      assert!(ll.contains(0).is_none());
+      assert!(ll.delete(0).is_none());
+      assert!(ll.insert(2).is_some());
+      println!("Ins 0: {}", ll.to_string());
     }
 
     {
-      let mut lock = thread.lock();
-      assert!(ll.insert(&mut lock, 0).is_some());
-      assert!(ll.insert(&mut lock, 1).is_some());
-      println!("Ins 1: {}", ll.to_string(&mut lock));
+      assert!(ll.insert(0).is_some());
+      assert!(ll.insert(1).is_some());
+      println!("Ins 1: {}", ll.to_string());
     }
 
     {
-      let mut lock = thread.lock();
       for i in 0..=2 {
-        assert!(ll.contains(&mut lock, i).is_some());
+        assert!(ll.contains(i).is_some());
       }
 
-      assert!(ll.contains(&mut lock, 5).is_none());
+      assert!(ll.contains(5).is_none());
       println!("Contains");
     }
 
     {
-      let mut lock = thread.lock();
-      assert!(ll.delete(&mut lock, 1).is_some());
-      println!("Del 1: {}", ll.to_string(&mut lock));
+      assert!(ll.delete(1).is_some());
+      println!("Del 1: {}", ll.to_string());
     }
 
     {
-      let mut lock = thread.lock();
-      assert!(ll.contains(&mut lock, 1).is_none());
+      assert!(ll.contains(1).is_none());
     }
 
     {
-      let mut lock = thread.lock();
-      assert!(ll.delete(&mut lock, 0).is_some());
-      assert!(ll.contains(&mut lock, 0).is_none());
+      assert!(ll.delete(0).is_some());
+      assert!(ll.contains(0).is_none());
 
-      assert!(ll.delete(&mut lock, 2).is_some());
-      println!("Del 2: {}", ll.to_string(&mut lock));
+      assert!(ll.delete(2).is_some());
+      println!("Del 2: {}", ll.to_string());
     }
   }
 }
@@ -64,23 +57,53 @@ fn ll_simple() {
 #[test]
 fn ll_thread() {
   let rlu: Arc<Rlu<RluListNode<usize>>> = Arc::new(Rlu::new());
-  let ll = RluList::new(rlu);
+  let mut ll = RluList::new(rlu.clone());
 
-  // TODO: concurrency test
+  {
+    let thread = rlu.make_thread();
+    for i in 0..1000 {
+      assert!(ll.insert(i).is_some());
+    }
+  }
 
   let reader = || {
+    let rlu = rlu.clone();
     let mut ll = ll.clone();
     thread::spawn(move || {
       let mut rng = thread_rng();
-      for _ in 0..100 {
-        let i = rng.gen_range(0, 50) * 2;
+
+      for _ in 0..10000 {
+        let i = rng.gen_range(0, 500) * 2;
         assert!(ll.contains(i).is_some());
       }
     })
   };
 
   let writer = || {
+    let rlu = rlu.clone();
     let mut ll = ll.clone();
-    thread::spawn(move || {});
+    thread::spawn(move || {
+      let mut rng = thread_rng();
+
+      for i in 0..1000 {
+        let i = rng.gen_range(0, 499) * 2 + 1;
+        if random() {
+          ll.insert(i);
+        } else {
+          ll.delete(i);
+        }
+      }
+    })
   };
+
+  let readers: Vec<_> = (0..16).map(|_| reader()).collect();
+  let writers: Vec<_> = (0..4).map(|_| writer()).collect();
+
+  for t in readers {
+    t.join().unwrap();
+  }
+
+  for t in writers {
+    t.join().unwrap();
+  }
 }

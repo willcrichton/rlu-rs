@@ -7,7 +7,7 @@ use std::{thread, time};
 use rlu::Rlu;
 
 #[test]
-fn basic() {
+fn basic_single() {
   let rlu: Arc<Rlu<u64>> = Arc::new(Rlu::new());
   let mut obj = rlu.alloc(3);
   let thread = rlu.make_thread();
@@ -58,7 +58,7 @@ fn basic() {
 }
 
 #[test]
-fn overlapping_reader_writer() {
+fn basic_overlapping_reader_writer() {
   let rlu: Arc<Rlu<u64>> = Arc::new(Rlu::new());
   let mut obj = rlu.alloc(3);
 
@@ -103,11 +103,11 @@ fn overlapping_reader_writer() {
 }
 
 #[test]
-fn thread() {
+fn basic_thread() {
   let rlu: Arc<Rlu<u64>> = Arc::new(Rlu::new());
   let mut obj = rlu.alloc(0);
 
-  let reader = || {
+  let reader = |id: u64| {
     let rlu = rlu.clone();
     thread::spawn(move || {
       let thr = rlu.make_thread();
@@ -119,30 +119,42 @@ fn thread() {
         thread::sleep(time::Duration::from_millis(10));
         assert_eq!(unsafe { *n }, x);
       }
+
+      println!("Reader {} exit", id);
     })
   };
 
-  let writer = || {
+  let writer = |id: u64| {
     let rlu = rlu.clone();
     thread::spawn(move || {
       let thr = rlu.make_thread();
 
-      for _ in 0..1000 {
-        let mut lock = thr.lock();
+      for i in 0..1000 {
+        // if i % 100 == 0 {
+        //   println!("{}: {}", id, i);
+        // }
         loop {
+          let mut lock = thr.lock();
           if let Some(n) = lock.try_lock(obj) {
             unsafe {
               *n += 1;
             }
             break;
+          } else {
+            lock.abort();
           }
         }
       }
+
+      println!("Writer {} exit", id);
     })
   };
 
-  let readers: Vec<_> = (0..16).map(|_| reader()).collect();
-  let writers: Vec<_> = (0..1).map(|_| writer()).collect();
+  let num_readers = 16;
+  let num_writers = 2;
+
+  let readers: Vec<_> = (0..num_readers).map(|i| reader(i)).collect();
+  let writers: Vec<_> = (0..num_writers).map(|i| writer(i)).collect();
 
   for t in readers {
     t.join().expect("Reader panicked");
@@ -154,5 +166,5 @@ fn thread() {
 
   let thr = rlu.make_thread();
   let mut lock = thr.lock();
-  assert_eq!(unsafe { *lock.dereference(obj) }, 1000);
+  assert_eq!(unsafe { *lock.dereference(obj) }, 1000 * num_writers);
 }

@@ -1,12 +1,13 @@
 #![allow(dead_code, unused_variables)]
 
 use std::fmt::Debug;
+use std::mem;
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::thread;
 use std::usize;
 
-const RLU_MAX_LOG_SIZE: usize = 32;
+const RLU_MAX_LOG_SIZE: usize = 128;
 const RLU_MAX_THREADS: usize = 32;
 
 pub struct ObjOriginal<T> {
@@ -63,7 +64,6 @@ impl<T: Default> Default for ObjCopy<T> {
   }
 }
 
-#[derive(Default)]
 struct WriteLog<T> {
   entries: [ObjCopy<T>; RLU_MAX_LOG_SIZE],
   num_entries: usize,
@@ -89,7 +89,10 @@ pub struct Rlu<T> {
   num_threads: AtomicUsize,
 }
 
-pub struct RluSession<'a, T: RluBounds>(&'a mut RluThread<T>);
+pub struct RluSession<'a, T: RluBounds> {
+  t: &'a mut RluThread<T>,
+  abort: bool,
+}
 
 pub trait RluBounds: Default + Copy + Debug {}
 impl<T: Default + Copy + Debug> RluBounds for T {}
@@ -98,6 +101,11 @@ impl<T> WriteLog<T> {
   fn next_entry(&mut self) -> &mut ObjCopy<T> {
     let i = self.num_entries;
     self.num_entries += 1;
+
+    if self.num_entries >= RLU_MAX_LOG_SIZE {
+      panic!("RLU max log size exceeded");
+    }
+
     &mut self.entries[i]
   }
 }
@@ -107,7 +115,7 @@ impl<T: RluBounds> Rlu<T> {
     Rlu {
       global_clock: AtomicUsize::new(0),
       num_threads: AtomicUsize::new(0),
-      threads: Default::default(),
+      threads: unsafe { mem::uninitialized() },
     }
   }
 
@@ -116,6 +124,7 @@ impl<T: RluBounds> Rlu<T> {
     let thread: *mut RluThread<T> =
       &self.threads[thread_id] as *const RluThread<T> as *mut RluThread<T>;
     let thread: &mut RluThread<T> = unsafe { &mut *thread };
+    *thread = RluThread::new();
     thread.thread_id = thread_id;
     thread.global = self as *const Rlu<T>;
     return thread;
@@ -148,17 +157,17 @@ macro_rules! log {
 
 impl<'a, T: RluBounds> RluSession<'a, T> {
   pub fn dereference(&mut self, obj: RluObject<T>) -> *const T {
-    log!(self.0, "dereference");
-    let global = unsafe { &*self.0.global };
+    log!(self.t, "dereference");
+    let global = unsafe { &*self.t.global };
     match obj.deref() {
       RluObjType::Copy(copy) => &copy.data as *const T,
       RluObjType::Original(orig) => match orig.copy.load(Ordering::SeqCst) {
         ptr if ptr.is_null() => &orig.data,
         copy => {
           let copy = unsafe { &*copy };
-          if self.0.thread_id == copy.thread_id {
+          if self.t.thread_id == copy.thread_id {
             log!(
-              self.0,
+              self.t,
               format!(
                 "dereference self copy {:?} ({:p})",
                 copy.data, &copy.data
@@ -167,13 +176,13 @@ impl<'a, T: RluBounds> RluSession<'a, T> {
             &copy.data
           } else {
             let thread = unsafe { &*global.get_thread(copy.thread_id) };
-            if thread.write_clock <= self.0.local_clock {
-              log!(self.0,
-                   format!("dereference other copy {:?} ({:p}), write clock {}, local clock {}", copy.data, &copy.data, thread.write_clock, self.0.local_clock));
+            if thread.write_clock <= self.t.local_clock {
+              log!(self.t,
+                   format!("dereference other copy {:?} ({:p}), write clock {}, local clock {}", copy.data, &copy.data, thread.write_clock, self.t.local_clock));
               &copy.data
             } else {
               log!(
-                self.0,
+                self.t,
                 format!(
                   "dereferencing original {:?} ({:p})",
                   orig.data, &orig.data
@@ -188,17 +197,17 @@ impl<'a, T: RluBounds> RluSession<'a, T> {
   }
 
   pub fn try_lock(&mut self, mut obj: RluObject<T>) -> Option<*mut T> {
-    log!(self.0, format!("try_lock"));
-    let global = unsafe { &*self.0.global };
-    self.0.is_writer = true;
+    log!(self.t, format!("try_lock"));
+    let global = unsafe { &*self.t.global };
+    self.t.is_writer = true;
     let mut orig = match obj.deref_mut() {
-      RluObjType::Original(orig) => match orig.copy.load(Ordering::Acquire) {
+      RluObjType::Original(orig) => match orig.copy.load(Ordering::SeqCst) {
         ptr if ptr.is_null() => obj,
         copy => {
           let copy = unsafe { &mut *copy };
-          if self.0.thread_id == copy.thread_id {
+          if self.t.thread_id == copy.thread_id {
             log!(
-              self.0,
+              self.t,
               format!(
                 "locked existing copy {:?} ({:p})",
                 copy.data, &copy.data
@@ -206,7 +215,6 @@ impl<'a, T: RluBounds> RluSession<'a, T> {
             );
             return Some(&mut copy.data as *mut T);
           } else {
-            self.0.abort();
             return None;
           }
         }
@@ -215,19 +223,18 @@ impl<'a, T: RluBounds> RluSession<'a, T> {
       RluObjType::Copy(copy) => copy.original,
     };
 
-    let active_log = &mut self.0.logs[self.0.current_log];
+    let active_log = &mut self.t.logs[self.t.current_log];
     let copy = active_log.next_entry();
-    copy.thread_id = self.0.thread_id;
+    copy.thread_id = self.t.thread_id;
     copy.original = orig;
     if let RluObjType::Original(ref mut orig) = orig.deref_mut() {
       copy.data = orig.data;
       let prev_ptr =
         orig
           .copy
-          .compare_and_swap(ptr::null_mut(), copy, Ordering::Release);
+          .compare_and_swap(ptr::null_mut(), copy, Ordering::SeqCst);
       if prev_ptr != ptr::null_mut() {
         active_log.num_entries -= 1;
-        self.0.abort();
         return None;
       }
     } else {
@@ -235,19 +242,19 @@ impl<'a, T: RluBounds> RluSession<'a, T> {
     };
 
     log!(
-      self.0,
+      self.t,
       format!("locked new copy {:?} ({:p})", copy.data, &copy.data)
     );
 
     Some(&mut copy.data as *mut T)
   }
 
-  pub fn abort(&mut self) {
-    self.0.abort()
+  pub fn abort(mut self) {
+    self.abort = true;
   }
 
   pub fn assign_ptr(&self, ptr: &mut RluObject<T>, obj: RluObject<T>) {
-    log!(self.0, format!("assigning to {:?}", obj));
+    log!(self.t, format!("assigning to {:?}", obj));
     *ptr = match obj.deref() {
       RluObjType::Original(_) => obj,
       RluObjType::Copy(copy) => copy.original,
@@ -257,14 +264,19 @@ impl<'a, T: RluBounds> RluSession<'a, T> {
 
 impl<'a, T: RluBounds> Drop for RluSession<'a, T> {
   fn drop(&mut self) {
-    self.0.unlock();
+    log!(self.t, "DROP??");
+    if self.abort {
+      self.t.abort();
+    } else {
+      self.t.unlock();
+    }
   }
 }
 
 impl<T: RluBounds> RluThread<T> {
   fn new() -> RluThread<T> {
-    RluThread {
-      logs: Default::default(),
+    let mut thread = RluThread {
+      logs: unsafe { mem::uninitialized() },
       current_log: 0,
       is_writer: false,
       write_clock: usize::MAX,
@@ -272,16 +284,28 @@ impl<T: RluBounds> RluThread<T> {
       run_counter: 0,
       thread_id: 0,
       global: ptr::null(),
+    };
+
+    for i in 0..2 {
+      thread.logs[i].num_entries = 0;
     }
+
+    thread
   }
 
   pub fn lock<'a>(&'a mut self) -> RluSession<'a, T> {
+    log!(self, "lock");
     let global = unsafe { &*self.global };
     self.run_counter += 1;
+    assert!(self.run_counter % 2 == 1);
+
     self.local_clock = global.global_clock.load(Ordering::SeqCst);
     log!(self, format!("lock with local clock {}", self.local_clock));
     self.is_writer = false;
-    RluSession(self)
+    RluSession {
+      t: self,
+      abort: false,
+    }
   }
 
   fn commit_write_log(&mut self) {
@@ -298,6 +322,7 @@ impl<T: RluBounds> RluThread<T> {
   fn unlock(&mut self) {
     log!(self, "unlock");
     self.run_counter += 1;
+    assert!(self.run_counter % 2 == 0);
 
     if self.is_writer {
       self.commit_write_log();
@@ -330,6 +355,7 @@ impl<T: RluBounds> RluThread<T> {
         unreachable!()
       }
     }
+    active_log.num_entries = 0;
   }
 
   fn swap_logs(&mut self) {
@@ -355,7 +381,6 @@ impl<T: RluBounds> RluThread<T> {
       let thread = &global.threads[i];
       loop {
         log!(self, format!("wait on thread {}: rc {}, counter {}, write clock {}, local clock {}", i, run_counts[i], thread.run_counter, self.write_clock, thread.local_clock));
-        // thread::sleep(time::Duration::from_millis(10));
 
         if run_counts[i] % 2 == 0
           || thread.run_counter != run_counts[i]
@@ -372,14 +397,10 @@ impl<T: RluBounds> RluThread<T> {
   fn abort(&mut self) {
     log!(self, "abort");
     self.run_counter += 1;
+    assert!(self.run_counter % 2 == 0);
+
     if self.is_writer {
       self.unlock_write_log();
     }
-  }
-}
-
-impl<T: RluBounds> Default for RluThread<T> {
-  fn default() -> Self {
-    RluThread::new()
   }
 }

@@ -1,6 +1,6 @@
 #![allow(unused_mut, unused_variables, unused_assignments, dead_code)]
 
-use crate::rlu::{Rlu, RluBounds, RluObject, RluSession};
+use crate::rlu::{Rlu, RluBounds, RluObject, RluSession, RluThread};
 use std::sync::Arc;
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -9,16 +9,20 @@ pub struct RluListNode<T> {
   next: Option<RluObject<RluListNode<T>>>,
 }
 
-#[derive(Clone)]
 pub struct RluList<T> {
   head: RluObject<RluListNode<T>>,
+  thread: *mut RluThread<RluListNode<T>>,
   rlu: Arc<Rlu<RluListNode<T>>>,
 }
+
+unsafe impl<T> Send for RluList<T> {}
+unsafe impl<T> Sync for RluList<T> {}
 
 impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
   pub fn new(rlu: Arc<Rlu<RluListNode<T>>>) -> RluList<T> {
     RluList {
       head: rlu.alloc(RluListNode::default()),
+      thread: rlu.make_thread() as *mut RluThread<RluListNode<T>>,
       rlu,
     }
   }
@@ -27,21 +31,20 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
     &self,
     lock: &mut RluSession<'a, RluListNode<T>>,
     value: T,
-  ) -> Option<(
+  ) -> (
     Option<RluObject<RluListNode<T>>>,
     Option<RluObject<RluListNode<T>>>,
-  )> {
+  ) {
     let mut prev = &None;
     let mut next = &unsafe { (*lock.dereference(self.head)).next };
 
     loop {
       match next {
         None => {
-          return None;
+          break;
         }
         Some(next_ref) => {
           let node = lock.dereference(*next_ref);
-          //println!("{:?}", unsafe { (*node) });
           if unsafe { (*node).value } >= value {
             break;
           }
@@ -52,30 +55,38 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
       };
     }
 
-    Some((*prev, *next))
+    (*prev, *next)
   }
 
   fn find_lock<'a>(
     &self,
-    lock: &mut RluSession<'a, RluListNode<T>>,
     value: T,
-  ) -> Option<(
+  ) -> (
     Option<(RluObject<RluListNode<T>>, *mut RluListNode<T>)>,
     Option<(RluObject<RluListNode<T>>, *mut RluListNode<T>)>,
-  )> {
+    Option<*mut RluListNode<T>>,
+    RluSession<'a, RluListNode<T>>,
+  ) {
     loop {
-      let (prev, next) = self.find(lock, value)?;
+      let mut lock = unsafe { (*self.thread).lock() };
+      let (prev, next) = self.find(&mut lock, value);
 
-      let prev_node = if let Some(prev) = prev {
+      let (head_node, prev_node) = if let Some(prev) = prev {
         match lock.try_lock(prev) {
-          Some(prev_node) => Some(prev_node),
+          Some(prev_node) => (None, Some(prev_node)),
           None => {
             lock.abort();
             continue;
           }
         }
       } else {
-        None
+        match lock.try_lock(self.head) {
+          Some(head_node) => (Some(head_node), None),
+          None => {
+            lock.abort();
+            continue;
+          }
+        }
       };
 
       let next_node = if let Some(next) = next {
@@ -90,20 +101,20 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
         None
       };
 
-      return Some((
+      return (
         prev_node.map(|p| (prev.unwrap(), p)),
         next_node.map(|n| (next.unwrap(), n)),
-      ));
+        head_node,
+        lock,
+      );
     }
   }
 
-  pub fn contains<'a>(
-    &self,
-    lock: &mut RluSession<'a, RluListNode<T>>,
-    value: T,
-  ) -> Option<()> {
-    let (_, head) = self.find(lock, value)?;
+  pub fn contains(&self, value: T) -> Option<()> {
+    let mut lock = unsafe { (*self.thread).lock() };
+    let (_, head) = self.find(&mut lock, value);
     head.and_then(|head_ref| {
+      //println!("{:?} {:?}", value, unsafe { *lock.dereference(head_ref) }.value);
       if unsafe { *lock.dereference(head_ref) }.value == value {
         Some(())
       } else {
@@ -112,36 +123,29 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
     })
   }
 
-  pub fn insert<'a>(
-    &mut self,
-    lock: &mut RluSession<'a, RluListNode<T>>,
-    value: T,
-  ) -> Option<()> {
-    let mut head_node = None;
-    let mut prev_opt;
-    let mut next_opt;
+  pub fn len(&self) -> usize {
+    let mut lock = unsafe { (*self.thread).lock() };
+    let mut cur = &unsafe { (*lock.dereference(self.head)).next };
+    let mut i = 0;
+
     loop {
-      let (prev_opt2, next_opt2) = match self.find_lock(lock, value) {
-        None => (None, None),
-        Some(opts) => opts,
-      };
-
-      if let None = prev_opt2 {
-        match lock.try_lock(self.head) {
-          None => {
-            lock.abort();
-            continue;
-          }
-          Some(head_node2) => {
-            head_node = Some(head_node2);
-          }
+      match cur {
+        None => {
+          break;
         }
-      }
-
-      prev_opt = prev_opt2;
-      next_opt = next_opt2;
-      break;
+        Some(cur_ref) => {
+          let node = lock.dereference(*cur_ref);
+          i += 1;
+          cur = unsafe { &(*node).next };
+        }
+      };
     }
+
+    return i;
+  }
+
+  pub fn insert(&mut self, value: T) -> Option<()> {
+    let (prev_opt, next_opt, head_node, mut lock) = self.find_lock(value);
 
     let new = self.rlu.alloc(RluListNode { value, next: None });
 
@@ -171,30 +175,8 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
     Some(())
   }
 
-  pub fn delete<'a>(
-    &mut self,
-    lock: &mut RluSession<'a, RluListNode<T>>,
-    value: T,
-  ) -> Option<()> {
-    let mut head_node = None;
-    let mut prev_opt;
-    let mut next_opt;
-    loop {
-      let (prev_opt2, next_opt2) = self.find_lock(lock, value)?;
-      if let None = prev_opt2 {
-        match lock.try_lock(self.head) {
-          None => {
-            continue;
-          }
-          Some(head_node2) => {
-            head_node = Some(head_node2);
-          }
-        }
-      }
-      prev_opt = prev_opt2;
-      next_opt = next_opt2;
-      break;
-    }
+  pub fn delete(&mut self, value: T) -> Option<()> {
+    let (prev_opt, next_opt, head_node, mut lock) = self.find_lock(value);
 
     match next_opt {
       Some((_, next_node)) => {
@@ -234,10 +216,8 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
     Some(())
   }
 
-  pub fn to_string<'a>(
-    &self,
-    lock: &mut RluSession<'a, RluListNode<T>>,
-  ) -> String {
+  pub fn to_string(&self) -> String {
+    let mut lock = unsafe { (*self.thread).lock() };
     let mut cur = &unsafe { (*lock.dereference(self.head)).next };
     let mut s = String::new();
 
@@ -255,5 +235,15 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
     }
 
     return s;
+  }
+}
+
+impl<T: RluBounds> Clone for RluList<T> {
+  fn clone(&self) -> Self {
+    RluList {
+      head: self.head,
+      thread: self.rlu.make_thread(),
+      rlu: self.rlu.clone(),
+    }
   }
 }
