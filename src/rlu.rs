@@ -148,7 +148,7 @@ impl<T: RluBounds> Rlu<T> {
 
 macro_rules! log {
   ($self:expr, $e:expr) => {
-    if false {
+    if cfg!(debug_assertions) {
       let s: String = $e.into();
       println!("Thread {}: {}", $self.thread_id, s);
     }
@@ -297,7 +297,9 @@ impl<T: RluBounds> RluThread<T> {
     log!(self, "lock");
     let global = unsafe { &*self.global };
     self.run_counter += 1;
-    assert!(self.run_counter % 2 == 1);
+    if cfg!(debug_assertions) {
+      assert!(self.run_counter % 2 == 1);
+    }
 
     self.local_clock = global.global_clock.load(Ordering::SeqCst);
     log!(self, format!("lock with local clock {}", self.local_clock));
@@ -322,7 +324,9 @@ impl<T: RluBounds> RluThread<T> {
   fn unlock(&mut self) {
     log!(self, "unlock");
     self.run_counter += 1;
-    assert!(self.run_counter % 2 == 0);
+    if cfg!(debug_assertions) {
+      assert!(self.run_counter % 2 == 0);
+    }
 
     if self.is_writer {
       self.commit_write_log();
