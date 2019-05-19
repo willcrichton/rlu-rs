@@ -98,16 +98,17 @@ fn ll_readwrite(
 }
 
 fn benchmark() {
-  for write_frac in &[0.2] {
-    for num_threads in 4..=4 {
+  println!("write_frac,num_threads,throughput");
+  for write_frac in &[0.02, 0.2, 0.4] {
+    for num_threads in 1..=8 {
       let opts = BenchOpts {
         num_threads: num_threads,
         write_frac: *write_frac,
         insert_frac: 0.5,
         initial_size: 256,
         range: 512,
-        timeout: 5000,
-        num_iters: 2,
+        timeout: 10000,
+        num_iters: 3,
       };
 
       let ops: Vec<_> = (0..opts.num_iters)
@@ -133,23 +134,23 @@ fn benchmark() {
       let throughput = avg / ((opts.timeout * 1000) as f64);
 
       println!("{},{},{}", write_frac, num_threads, throughput);
-      println!("ops: {:.0}, throughput: {:.3}", avg, throughput);
-      println!(
-        "avg read: {:.2}us",
-        (ops[0].read_times as f64) / (ops[0].reads as f64) / 1000.
-      );
-      println!(
-        "avg insert: {:.2}us",
-        (ops[0].insert_times as f64) / (ops[0].inserts as f64) / 1000.
-      );
-      println!(
-        "avg delete: {:.2}us",
-        (ops[0].delete_times as f64) / (ops[0].deletes as f64) / 1000.
-      );
-      println!(
-        "avg op: {:.2}us",
-        (ops[0].op_times as f64) / (ops[0].ops as f64) / 1000.
-      );
+      // println!("ops: {:.0}, throughput: {:.3}", avg, throughput);
+      // println!(
+      //   "avg read: {:.2}us",
+      //   (ops[0].read_times as f64) / (ops[0].reads as f64) / 1000.
+      // );
+      // println!(
+      //   "avg insert: {:.2}us",
+      //   (ops[0].insert_times as f64) / (ops[0].inserts as f64) / 1000.
+      // );
+      // println!(
+      //   "avg delete: {:.2}us",
+      //   (ops[0].delete_times as f64) / (ops[0].deletes as f64) / 1000.
+      // );
+      // println!(
+      //   "avg op: {:.2}us",
+      //   (ops[0].op_times as f64) / (ops[0].ops as f64) / 1000.
+      // );
     }
   }
 }
