@@ -98,8 +98,8 @@ fn ll_readwrite(
 }
 
 fn benchmark() {
-  for write_frac in &[0.02] {
-    for num_threads in 1..=8 {
+  for write_frac in &[0.2] {
+    for num_threads in 4..=4 {
       let opts = BenchOpts {
         num_threads: num_threads,
         write_frac: *write_frac,

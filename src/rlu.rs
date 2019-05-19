@@ -9,6 +9,7 @@ use std::usize;
 
 const RLU_MAX_LOG_SIZE: usize = 128;
 const RLU_MAX_THREADS: usize = 32;
+const RLU_MAX_FREE_NODES: usize = 100000;
 
 pub struct ObjOriginal<T> {
   copy: AtomicPtr<ObjCopy<T>>,
@@ -35,8 +36,6 @@ impl<T> Clone for RluObject<T> {
   }
 }
 impl<T> Copy for RluObject<T> {}
-unsafe impl<T> Send for RluObject<T> {}
-unsafe impl<T> Sync for RluObject<T> {}
 
 impl<T> RluObject<T> {
   fn deref(&self) -> &RluObjType<T> {
@@ -78,16 +77,21 @@ pub struct RluThread<T> {
   run_counter: usize,
   thread_id: usize,
   global: *const Rlu<T>,
+  free_list: [RluObject<T>; RLU_MAX_FREE_NODES],
+  num_free: usize,
 }
-
-unsafe impl<T> Send for RluThread<T> {}
-unsafe impl<T> Sync for RluThread<T> {}
 
 pub struct Rlu<T> {
   global_clock: AtomicUsize,
   threads: [RluThread<T>; RLU_MAX_THREADS],
   num_threads: AtomicUsize,
 }
+
+unsafe impl<T> Send for RluObject<T> {}
+unsafe impl<T> Sync for RluObject<T> {}
+
+unsafe impl<T> Send for RluThread<T> {}
+unsafe impl<T> Sync for RluThread<T> {}
 
 pub struct RluSession<'a, T: RluBounds> {
   t: &'a mut RluThread<T>,
@@ -102,11 +106,11 @@ impl<T> WriteLog<T> {
     let i = self.num_entries;
     self.num_entries += 1;
 
-    if self.num_entries >= RLU_MAX_LOG_SIZE {
-      panic!("RLU max log size exceeded");
+    if cfg!(debug_assertions) {
+      assert!(self.num_entries < RLU_MAX_LOG_SIZE)
     }
 
-    &mut self.entries[i]
+    unsafe { self.entries.get_unchecked_mut(i) }
   }
 }
 
@@ -120,7 +124,7 @@ impl<T: RluBounds> Rlu<T> {
   }
 
   pub fn make_thread(&self) -> &mut RluThread<T> {
-    let thread_id = self.num_threads.fetch_add(1, Ordering::SeqCst);
+    let thread_id = self.num_threads.fetch_add(1, Ordering::Relaxed);
     let thread: *mut RluThread<T> =
       &self.threads[thread_id] as *const RluThread<T> as *mut RluThread<T>;
     let thread: &mut RluThread<T> = unsafe { &mut *thread };
@@ -135,14 +139,10 @@ impl<T: RluBounds> Rlu<T> {
   }
 
   pub fn alloc(&self, data: T) -> RluObject<T> {
-    // TODO: save object pointer to deallocate on Drop
-    let obj =
-      RluObject(Box::into_raw(Box::new(RluObjType::Original(ObjOriginal {
-        copy: AtomicPtr::new(ptr::null_mut()),
+    RluObject(Box::into_raw(Box::new(RluObjType::Original(ObjOriginal {
+      copy: AtomicPtr::new(ptr::null_mut()),
         data,
-      }))));
-
-    obj
+    }))))
   }
 }
 
@@ -284,6 +284,8 @@ impl<T: RluBounds> RluThread<T> {
       run_counter: 0,
       thread_id: 0,
       global: ptr::null(),
+      num_free: 0,
+      free_list: unsafe { mem::uninitialized() }
     };
 
     for i in 0..2 {
@@ -310,6 +312,20 @@ impl<T: RluBounds> RluThread<T> {
     }
   }
 
+  pub fn free(&mut self, obj: RluObject<T>) {
+    let free_id = self.num_free;
+    self.num_free += 1;
+    self.free_list[free_id] = obj;
+  }
+
+  fn process_free(&mut self) {
+    for i in 0..self.num_free {
+      unsafe { Box::from_raw(self.free_list[i].0) };
+    }
+
+    self.num_free = 0;
+  }
+
   fn commit_write_log(&mut self) {
     let global = unsafe { &*self.global };
     self.write_clock = global.global_clock.fetch_add(1, Ordering::SeqCst) + 1;
@@ -319,6 +335,7 @@ impl<T: RluBounds> RluThread<T> {
     self.unlock_write_log();
     self.write_clock = usize::MAX;
     self.swap_logs();
+    //self.process_free();
   }
 
   fn unlock(&mut self) {
