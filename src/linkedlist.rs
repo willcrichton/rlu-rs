@@ -61,15 +61,25 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
   fn find_lock<'a>(
     &self,
     value: T,
-  ) -> (
+    return_if_found: bool
+  ) -> Option<(
     Option<(RluObject<RluListNode<T>>, *mut RluListNode<T>)>,
     Option<(RluObject<RluListNode<T>>, *mut RluListNode<T>)>,
     Option<*mut RluListNode<T>>,
     RluSession<'a, RluListNode<T>>,
-  ) {
+  )> {
     loop {
       let mut lock = unsafe { (*self.thread).lock() };
       let (prev, next) = self.find(&mut lock, value);
+
+      if let Some(next) = next {
+        let found = unsafe { (*lock.dereference(next)).value } == value;
+        if (return_if_found && found) || (!return_if_found && !found)  {
+          return None;
+        }
+      } else if !return_if_found {
+        return None;
+      }
 
       let (head_node, prev_node) = if let Some(prev) = prev {
         match lock.try_lock(prev) {
@@ -101,12 +111,12 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
         None
       };
 
-      return (
+      return Some((
         prev_node.map(|p| (prev.unwrap(), p)),
         next_node.map(|n| (next.unwrap(), n)),
         head_node,
         lock,
-      );
+      ));
     }
   }
 
@@ -144,7 +154,7 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
   }
 
   pub fn insert(&mut self, value: T) -> Option<()> {
-    let (prev_opt, next_opt, head_node, mut lock) = self.find_lock(value);
+    let (prev_opt, next_opt, head_node, mut lock) = self.find_lock(value, true)?;
 
     let new = self.rlu.alloc(RluListNode { value, next: None });
 
@@ -175,24 +185,13 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
   }
 
   pub fn delete(&mut self, value: T) -> Option<()> {
-    let (prev_opt, next_opt, head_node, mut lock) = self.find_lock(value);
-
-    match next_opt {
-      Some((_, next_node)) => {
-        if unsafe { (*next_node).value } != value {
-          return None;
-        }
-      }
-      None => {
-        return None;
-      }
-    };
+    let (prev_opt, next_opt, head_node, mut lock) = self.find_lock(value, false)?;
 
     if let Some((prev, prev_node)) = prev_opt {
       if let Some((_, next_node)) = next_opt {
         if let Some(next2) = unsafe { (*next_node).next } {
           lock.assign_ptr(
-            unsafe { (*prev_node).next.get_or_insert(RluObject::default()) },
+            unsafe { (*prev_node).next.get_or_insert_with(|| RluObject::default()) },
             next2,
           );
         } else {
