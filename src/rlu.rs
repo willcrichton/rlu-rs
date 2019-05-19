@@ -9,7 +9,7 @@ use std::usize;
 
 const RLU_MAX_LOG_SIZE: usize = 128;
 const RLU_MAX_THREADS: usize = 32;
-const RLU_MAX_FREE_NODES: usize = 100000;
+const RLU_MAX_FREE_NODES: usize = 100;
 
 pub struct ObjOriginal<T> {
   copy: AtomicPtr<ObjCopy<T>>,
@@ -335,7 +335,7 @@ impl<T: RluBounds> RluThread<T> {
     self.unlock_write_log();
     self.write_clock = usize::MAX;
     self.swap_logs();
-    //self.process_free();
+    self.process_free();
   }
 
   fn unlock(&mut self) {

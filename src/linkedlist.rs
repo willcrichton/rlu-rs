@@ -211,6 +211,10 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
       }
     }
 
+    if let Some((next, _)) = next_opt {
+      unsafe { (*self.thread).free(next); }
+    }
+
     Some(())
   }
 
