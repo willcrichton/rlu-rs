@@ -21,48 +21,84 @@ struct BenchOpts {
   num_iters: usize,
 }
 
+#[derive(Clone, Copy, Default, Debug)]
+struct BenchResult {
+  reads: usize,
+  read_times: u128,
+  inserts: usize,
+  insert_times: u128,
+  deletes: usize,
+  delete_times: u128,
+  ops: usize,
+  op_times: u128,
+}
+
 fn ll_readwrite(
   ll: RluList<usize>,
   rlu: Arc<Rlu<RluListNode<usize>>>,
   opts: BenchOpts,
-) -> usize {
+) -> BenchResult {
   let worker = || {
     let rlu = rlu.clone();
     let mut ll = ll.clone();
 
     thread::spawn(move || {
       let mut rng = thread_rng();
-      let mut ops = 0;
+      let mut result = BenchResult::default();
       let start = Instant::now();
       loop {
         if start.elapsed().as_millis() >= opts.timeout {
           break;
         }
 
+        let iter_start = Instant::now();
         let i = rng.gen_range(0, opts.range);
         if rng.gen::<f64>() > opts.write_frac {
+          let start = Instant::now();
           ll.contains(i);
+          result.reads += 1;
+          result.read_times += start.elapsed().as_nanos();
         } else {
           if rng.gen::<f64>() > opts.insert_frac {
+            let start = Instant::now();
             ll.insert(i);
+            result.inserts += 1;
+            result.insert_times += start.elapsed().as_nanos();
           } else {
+            let start = Instant::now();
             ll.delete(i);
+            result.deletes += 1;
+            result.delete_times += start.elapsed().as_nanos();
           }
         }
 
-        ops += 1;
+        result.ops += 1;
+        result.op_times += iter_start.elapsed().as_nanos();
       }
 
-      ops
+      result
     })
   };
 
   let threads: Vec<_> = (0..opts.num_threads).map(|_| worker()).collect();
-  threads.into_iter().map(|t| t.join().unwrap()).sum()
+  threads.into_iter().map(|t| t.join().unwrap()).fold(
+    BenchResult::default(),
+    |mut acc, res| {
+      acc.ops += res.ops;
+      acc.reads += res.reads;
+      acc.inserts += res.inserts;
+      acc.deletes += res.deletes;
+      acc.op_times += res.op_times;
+      acc.read_times += res.read_times;
+      acc.insert_times += res.insert_times;
+      acc.delete_times += res.delete_times;
+      acc
+    },
+  )
 }
 
 fn benchmark() {
-  for write_frac in &[0.02, 0.2, 0.4] {
+  for write_frac in &[0.02] {
     for num_threads in 1..=8 {
       let opts = BenchOpts {
         num_threads: num_threads,
@@ -70,8 +106,8 @@ fn benchmark() {
         insert_frac: 0.5,
         initial_size: 256,
         range: 512,
-        timeout: 2000,
-        num_iters: 5,
+        timeout: 5000,
+        num_iters: 2,
       };
 
       let ops: Vec<_> = (0..opts.num_iters)
@@ -92,11 +128,28 @@ fn benchmark() {
         })
         .collect();
 
-      let avg: f64 = (ops.iter().sum::<usize>() as f64) / (ops.len() as f64);
+      let avg: f64 = (ops.iter().map(|res| res.ops).sum::<usize>() as f64)
+        / (ops.len() as f64);
       let throughput = avg / ((opts.timeout * 1000) as f64);
 
-      println!("ops: {:.0}, throughput: {:.3}", avg, throughput);
       println!("{},{},{}", write_frac, num_threads, throughput);
+      println!("ops: {:.0}, throughput: {:.3}", avg, throughput);
+      println!(
+        "avg read: {:.2}us",
+        (ops[0].read_times as f64) / (ops[0].reads as f64) / 1000.
+      );
+      println!(
+        "avg insert: {:.2}us",
+        (ops[0].insert_times as f64) / (ops[0].inserts as f64) / 1000.
+      );
+      println!(
+        "avg delete: {:.2}us",
+        (ops[0].delete_times as f64) / (ops[0].deletes as f64) / 1000.
+      );
+      println!(
+        "avg op: {:.2}us",
+        (ops[0].op_times as f64) / (ops[0].ops as f64) / 1000.
+      );
     }
   }
 }
