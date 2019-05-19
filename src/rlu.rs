@@ -148,8 +148,8 @@ impl<T: RluBounds> Rlu<T> {
 
 macro_rules! log {
   ($self:expr, $e:expr) => {
-    let s: String = $e.into();
     if false {
+      let s: String = $e.into();
       println!("Thread {}: {}", $self.thread_id, s);
     }
   };

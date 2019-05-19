@@ -1,3 +1,5 @@
+extern crate flame;
+
 mod linkedlist;
 mod rlu;
 
