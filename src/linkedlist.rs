@@ -114,7 +114,6 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
     let mut lock = unsafe { (*self.thread).lock() };
     let (_, head) = self.find(&mut lock, value);
     head.and_then(|head_ref| {
-      //println!("{:?} {:?}", value, unsafe { *lock.dereference(head_ref) }.value);
       if unsafe { *lock.dereference(head_ref) }.value == value {
         Some(())
       } else {

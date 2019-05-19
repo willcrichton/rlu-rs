@@ -5,10 +5,10 @@ extern crate test;
 
 use rand::{thread_rng, Rng};
 use rlu::{Rlu, RluList, RluListNode};
+use std::fs::File;
 use std::sync::Arc;
 use std::thread;
-use std::time::{Instant, Duration};
-use test::black_box;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy)]
 struct BenchOpts {
@@ -18,6 +18,7 @@ struct BenchOpts {
   timeout: u128,
   write_frac: f64,
   insert_frac: f64,
+  num_iters: usize,
 }
 
 fn ll_readwrite(
@@ -40,12 +41,12 @@ fn ll_readwrite(
 
         let i = rng.gen_range(0, opts.range);
         if rng.gen::<f64>() > opts.write_frac {
-          black_box(ll.contains(i));
+          ll.contains(i);
         } else {
           if rng.gen::<f64>() > opts.insert_frac {
-            black_box(ll.insert(i));
+            ll.insert(i);
           } else {
-            black_box(ll.delete(i));
+            ll.delete(i);
           }
         }
 
@@ -70,26 +71,29 @@ fn benchmark() {
         initial_size: 256,
         range: 512,
         timeout: 2000,
+        num_iters: 5,
       };
 
-      let ops: Vec<_> = (0..3).map(|_| {
-        let rlu: Arc<Rlu<RluListNode<usize>>> = Arc::new(Rlu::new());
-        let mut ll = RluList::new(rlu.clone());
+      let ops: Vec<_> = (0..opts.num_iters)
+        .map(|_| {
+          let rlu: Arc<Rlu<RluListNode<usize>>> = Arc::new(Rlu::new());
+          let mut ll = RluList::new(rlu.clone());
 
-        {
-          let thread = rlu.make_thread();
-          let mut rng = thread_rng();
-          while ll.len() < opts.initial_size {
-            let i = rng.gen_range(0, opts.range);
-            black_box(ll.insert(i));
+          {
+            let thread = rlu.make_thread();
+            let mut rng = thread_rng();
+            while ll.len() < opts.initial_size {
+              let i = rng.gen_range(0, opts.range);
+              ll.insert(i);
+            }
           }
-        }
 
-        ll_readwrite(ll, rlu, opts)
-      }).collect();
+          ll_readwrite(ll, rlu, opts)
+        })
+        .collect();
 
       let avg: f64 = (ops.iter().sum::<usize>() as f64) / (ops.len() as f64);
-      let throughput = avg / ((opts.timeout * 1000) as f64) ;
+      let throughput = avg / ((opts.timeout * 1000) as f64);
 
       println!("ops: {:.0}, throughput: {:.3}", avg, throughput);
       println!("{},{},{}", write_frac, num_threads, throughput);
