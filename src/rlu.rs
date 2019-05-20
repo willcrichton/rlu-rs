@@ -196,6 +196,7 @@ impl<'a, T: RluBounds> RluSession<'a, T> {
     }
   }
 
+  #[inline(never)]
   pub fn try_lock(&mut self, mut obj: RluObject<T>) -> Option<*mut T> {
     log!(self.t, format!("try_lock"));
     let global = unsafe { &*self.t.global };

@@ -4,11 +4,9 @@ extern crate rand;
 extern crate test;
 
 use rand::{thread_rng, Rng};
-use rlu::{Rlu, RluList, RluListNode};
-use std::fs::File;
-use std::sync::Arc;
+use rlu::RluList;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 #[derive(Clone, Copy)]
 struct BenchOpts {
@@ -35,13 +33,10 @@ struct BenchResult {
 
 fn ll_readwrite(
   ll: RluList<usize>,
-  rlu: Arc<Rlu<RluListNode<usize>>>,
   opts: BenchOpts,
 ) -> BenchResult {
   let worker = || {
-    let rlu = rlu.clone();
     let mut ll = ll.clone();
-
     thread::spawn(move || {
       let mut rng = thread_rng();
       let mut result = BenchResult::default();
@@ -113,19 +108,14 @@ fn benchmark() {
 
       let ops: Vec<_> = (0..opts.num_iters)
         .map(|_| {
-          let rlu: Arc<Rlu<RluListNode<usize>>> = Arc::new(Rlu::new());
-          let mut ll = RluList::new(rlu.clone());
-
-          {
-            let thread = rlu.make_thread();
-            let mut rng = thread_rng();
-            while ll.len() < opts.initial_size {
-              let i = rng.gen_range(0, opts.range);
-              ll.insert(i);
-            }
+          let mut ll = RluList::new();
+          let mut rng = thread_rng();
+          while ll.len() < opts.initial_size {
+            let i = rng.gen_range(0, opts.range);
+            ll.insert(i);
           }
 
-          ll_readwrite(ll, rlu, opts)
+          ll_readwrite(ll, opts)
         })
         .collect();
 

@@ -19,7 +19,8 @@ unsafe impl<T> Send for RluList<T> {}
 unsafe impl<T> Sync for RluList<T> {}
 
 impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
-  pub fn new(rlu: Arc<Rlu<RluListNode<T>>>) -> RluList<T> {
+  pub fn new() -> RluList<T> {
+    let rlu = Arc::new(Rlu::new());
     RluList {
       head: rlu.alloc(RluListNode::default()),
       thread: rlu.make_thread() as *mut RluThread<RluListNode<T>>,

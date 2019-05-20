@@ -1,16 +1,13 @@
 extern crate rand;
 
-use rlu::{Rlu, RluList, RluListNode};
-use std::sync::Arc;
+use rlu::RluList;
 use std::thread;
 
 use rand::{random, thread_rng, Rng};
 
 #[test]
 fn ll_simple() {
-  let rlu: Arc<Rlu<RluListNode<usize>>> = Arc::new(Rlu::new());
-  let thread = rlu.make_thread();
-  let mut ll = RluList::new(rlu.clone());
+  let mut ll = RluList::new();
 
   {
     {
@@ -56,19 +53,16 @@ fn ll_simple() {
 
 #[test]
 fn ll_thread() {
-  let rlu: Arc<Rlu<RluListNode<usize>>> = Arc::new(Rlu::new());
-  let mut ll = RluList::new(rlu.clone());
+  let mut ll = RluList::new();
 
   {
-    let thread = rlu.make_thread();
     for i in 0..1000 {
       assert!(ll.insert(i).is_some());
     }
   }
 
   let reader = || {
-    let rlu = rlu.clone();
-    let mut ll = ll.clone();
+    let ll = ll.clone();
     thread::spawn(move || {
       let mut rng = thread_rng();
 
@@ -80,12 +74,11 @@ fn ll_thread() {
   };
 
   let writer = || {
-    let rlu = rlu.clone();
     let mut ll = ll.clone();
     thread::spawn(move || {
       let mut rng = thread_rng();
 
-      for i in 0..1000 {
+      for _ in 0..1000 {
         let i = rng.gen_range(0, 499) * 2 + 1;
         if random() {
           ll.insert(i);
