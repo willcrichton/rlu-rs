@@ -22,13 +22,13 @@ pub struct ObjCopy<T> {
   data: T,
 }
 
-enum RluObjType<T> {
+pub(crate) enum RluObjType<T> {
   Original(ObjOriginal<T>),
   Copy(ObjCopy<T>),
 }
 
 #[derive(Debug)]
-pub struct RluObject<T>(*mut RluObjType<T>);
+pub struct RluObject<T>(pub(crate) *mut RluObjType<T>);
 
 impl<T> Clone for RluObject<T> {
   fn clone(&self) -> Self {
@@ -44,22 +44,6 @@ impl<T> RluObject<T> {
 
   fn deref_mut(&mut self) -> &mut RluObjType<T> {
     unsafe { &mut *self.0 }
-  }
-}
-
-impl<T> Default for RluObject<T> {
-  fn default() -> Self {
-    RluObject(ptr::null_mut())
-  }
-}
-
-impl<T: Default> Default for ObjCopy<T> {
-  fn default() -> Self {
-    ObjCopy {
-      thread_id: 0,
-      data: T::default(),
-      original: RluObject::default(),
-    }
   }
 }
 
@@ -98,8 +82,8 @@ pub struct RluSession<'a, T: RluBounds> {
   abort: bool,
 }
 
-pub trait RluBounds: Default + Copy + Debug {}
-impl<T: Default + Copy + Debug> RluBounds for T {}
+pub trait RluBounds: Copy + Debug {}
+impl<T: Copy + Debug> RluBounds for T {}
 
 impl<T> WriteLog<T> {
   fn next_entry(&mut self) -> &mut ObjCopy<T> {
@@ -141,7 +125,7 @@ impl<T: RluBounds> Rlu<T> {
   pub fn alloc(&self, data: T) -> RluObject<T> {
     RluObject(Box::into_raw(Box::new(RluObjType::Original(ObjOriginal {
       copy: AtomicPtr::new(ptr::null_mut()),
-        data,
+      data,
     }))))
   }
 }
@@ -196,7 +180,6 @@ impl<'a, T: RluBounds> RluSession<'a, T> {
     }
   }
 
-  #[inline(never)]
   pub fn try_lock(&mut self, mut obj: RluObject<T>) -> Option<*mut T> {
     log!(self.t, format!("try_lock"));
     let global = unsafe { &*self.t.global };
@@ -286,7 +269,7 @@ impl<T: RluBounds> RluThread<T> {
       thread_id: 0,
       global: ptr::null(),
       num_free: 0,
-      free_list: unsafe { mem::uninitialized() }
+      free_list: unsafe { mem::uninitialized() },
     };
 
     for i in 0..2 {

@@ -31,10 +31,7 @@ struct BenchResult {
   op_times: u128,
 }
 
-fn ll_readwrite(
-  ll: RluList<usize>,
-  opts: BenchOpts,
-) -> BenchResult {
+fn ll_readwrite(ll: RluList<usize>, opts: BenchOpts) -> BenchResult {
   let worker = || {
     let mut ll = ll.clone();
     thread::spawn(move || {

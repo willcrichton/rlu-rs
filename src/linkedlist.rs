@@ -1,9 +1,11 @@
 #![allow(unused_mut, unused_variables, unused_assignments, dead_code)]
 
 use crate::rlu::{Rlu, RluBounds, RluObject, RluSession, RluThread};
+use std::mem;
+use std::ptr;
 use std::sync::Arc;
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct RluListNode<T> {
   value: T,
   next: Option<RluObject<RluListNode<T>>>,
@@ -22,7 +24,10 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
   pub fn new() -> RluList<T> {
     let rlu = Arc::new(Rlu::new());
     RluList {
-      head: rlu.alloc(RluListNode::default()),
+      head: rlu.alloc(RluListNode {
+        value: unsafe { mem::uninitialized() },
+        next: None,
+      }),
       thread: rlu.make_thread() as *mut RluThread<RluListNode<T>>,
       rlu,
     }
@@ -62,7 +67,7 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
   fn find_lock<'a>(
     &self,
     value: T,
-    return_if_found: bool
+    return_if_found: bool,
   ) -> Option<(
     Option<(RluObject<RluListNode<T>>, *mut RluListNode<T>)>,
     Option<(RluObject<RluListNode<T>>, *mut RluListNode<T>)>,
@@ -75,7 +80,7 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
 
       if let Some(next) = next {
         let found = unsafe { (*lock.dereference(next)).value } == value;
-        if (return_if_found && found) || (!return_if_found && !found)  {
+        if (return_if_found && found) || (!return_if_found && !found) {
           return None;
         }
       } else if !return_if_found {
@@ -155,14 +160,15 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
   }
 
   pub fn insert(&mut self, value: T) -> Option<()> {
-    let (prev_opt, next_opt, head_node, mut lock) = self.find_lock(value, true)?;
+    let (prev_opt, next_opt, head_node, mut lock) =
+      self.find_lock(value, true)?;
 
     let new = self.rlu.alloc(RluListNode { value, next: None });
 
     let new = if let Some((next, next_node)) = next_opt {
       let new_ptr = lock.try_lock(new).expect("Try lock failed");
       lock.assign_ptr(
-        unsafe { (*new_ptr).next.get_or_insert(RluObject::default()) },
+        unsafe { (*new_ptr).next.get_or_insert(RluObject(ptr::null_mut())) },
         next,
       );
 
@@ -173,7 +179,7 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
 
     if let Some((prev, prev_node)) = prev_opt {
       lock.assign_ptr(
-        unsafe { (*prev_node).next.get_or_insert(RluObject::default()) },
+        unsafe { (*prev_node).next.get_or_insert(RluObject(ptr::null_mut())) },
         new,
       );
     } else {
@@ -186,13 +192,16 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
   }
 
   pub fn delete(&mut self, value: T) -> Option<()> {
-    let (prev_opt, next_opt, head_node, mut lock) = self.find_lock(value, false)?;
+    let (prev_opt, next_opt, head_node, mut lock) =
+      self.find_lock(value, false)?;
 
     if let Some((prev, prev_node)) = prev_opt {
       if let Some((_, next_node)) = next_opt {
         if let Some(next2) = unsafe { (*next_node).next } {
           lock.assign_ptr(
-            unsafe { (*prev_node).next.get_or_insert_with(|| RluObject::default()) },
+            unsafe {
+              (*prev_node).next.get_or_insert(RluObject(ptr::null_mut()))
+            },
             next2,
           );
         } else {
@@ -213,7 +222,9 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
     }
 
     if let Some((next, _)) = next_opt {
-      unsafe { (*self.thread).free(next); }
+      unsafe {
+        (*self.thread).free(next);
+      }
     }
 
     Some(())
