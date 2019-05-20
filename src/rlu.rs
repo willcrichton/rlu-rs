@@ -124,7 +124,7 @@ impl<T: RluBounds> Rlu<T> {
   }
 
   pub fn make_thread(&self) -> &mut RluThread<T> {
-    let thread_id = self.num_threads.fetch_add(1, Ordering::Relaxed);
+    let thread_id = self.num_threads.fetch_add(1, Ordering::Acquire);
     let thread: *mut RluThread<T> =
       &self.threads[thread_id] as *const RluThread<T> as *mut RluThread<T>;
     let thread: &mut RluThread<T> = unsafe { &mut *thread };
@@ -161,7 +161,7 @@ impl<'a, T: RluBounds> RluSession<'a, T> {
     let global = unsafe { &*self.t.global };
     match obj.deref() {
       RluObjType::Copy(copy) => &copy.data as *const T,
-      RluObjType::Original(orig) => match orig.copy.load(Ordering::SeqCst) {
+      RluObjType::Original(orig) => match orig.copy.load(Ordering::Acquire) {
         ptr if ptr.is_null() => &orig.data,
         copy => {
           let copy = unsafe { &*copy };
@@ -202,7 +202,7 @@ impl<'a, T: RluBounds> RluSession<'a, T> {
     let global = unsafe { &*self.t.global };
     self.t.is_writer = true;
     let mut orig = match obj.deref_mut() {
-      RluObjType::Original(orig) => match orig.copy.load(Ordering::SeqCst) {
+      RluObjType::Original(orig) => match orig.copy.load(Ordering::Acquire) {
         ptr if ptr.is_null() => obj,
         copy => {
           let copy = unsafe { &mut *copy };
@@ -233,7 +233,7 @@ impl<'a, T: RluBounds> RluSession<'a, T> {
       let prev_ptr =
         orig
           .copy
-          .compare_and_swap(ptr::null_mut(), copy, Ordering::SeqCst);
+          .compare_and_swap(ptr::null_mut(), copy, Ordering::AcqRel);
       if prev_ptr != ptr::null_mut() {
         active_log.num_entries -= 1;
         return None;
@@ -304,7 +304,7 @@ impl<T: RluBounds> RluThread<T> {
       assert!(self.run_counter % 2 == 1);
     }
 
-    self.local_clock = global.global_clock.load(Ordering::SeqCst);
+    self.local_clock = global.global_clock.load(Ordering::Acquire);
     log!(self, format!("lock with local clock {}", self.local_clock));
     self.is_writer = false;
     RluSession {
@@ -329,7 +329,7 @@ impl<T: RluBounds> RluThread<T> {
 
   fn commit_write_log(&mut self) {
     let global = unsafe { &*self.global };
-    self.write_clock = global.global_clock.fetch_add(1, Ordering::SeqCst) + 1;
+    self.write_clock = global.global_clock.fetch_add(1, Ordering::AcqRel) + 1;
     log!(self, format!("global clock: {}", self.write_clock));
     self.synchronize();
     self.writeback_logs();
@@ -372,7 +372,7 @@ impl<T: RluBounds> RluThread<T> {
       if let RluObjType::Original(ref mut orig) =
         active_log.entries[i].original.deref_mut()
       {
-        orig.copy.store(ptr::null_mut(), Ordering::SeqCst);
+        orig.copy.store(ptr::null_mut(), Ordering::Release);
       } else {
         unreachable!()
       }
@@ -390,7 +390,7 @@ impl<T: RluBounds> RluThread<T> {
   fn synchronize(&mut self) {
     log!(self, "synchronize");
     let global = unsafe { &*self.global };
-    let num_threads = global.num_threads.load(Ordering::SeqCst);
+    let num_threads = global.num_threads.load(Ordering::Acquire);
     let run_counts: Vec<usize> = (0..num_threads)
       .map(|i| global.threads[i].run_counter)
       .collect();
