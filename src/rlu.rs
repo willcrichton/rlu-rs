@@ -3,7 +3,7 @@
 use std::fmt::Debug;
 use std::mem;
 use std::ptr;
-use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
+use std::sync::{atomic, atomic::{AtomicPtr, AtomicUsize, Ordering}};
 use std::thread;
 use std::usize;
 
@@ -58,7 +58,7 @@ pub struct RluThread<T> {
   is_writer: bool,
   write_clock: usize,
   local_clock: usize,
-  run_counter: usize,
+  run_counter: AtomicUsize,
   thread_id: usize,
   global: *const Rlu<T>,
   free_list: [RluObject<T>; RLU_MAX_FREE_NODES],
@@ -265,7 +265,7 @@ impl<T: RluBounds> RluThread<T> {
       is_writer: false,
       write_clock: usize::MAX,
       local_clock: 0,
-      run_counter: 0,
+      run_counter: AtomicUsize::new(0),
       thread_id: 0,
       global: ptr::null(),
       num_free: 0,
@@ -282,9 +282,9 @@ impl<T: RluBounds> RluThread<T> {
   pub fn lock<'a>(&'a mut self) -> RluSession<'a, T> {
     log!(self, "lock");
     let global = unsafe { &*self.global };
-    self.run_counter += 1;
+    let cntr = self.run_counter.fetch_add(1, Ordering::SeqCst);
     if cfg!(debug_assertions) {
-      assert!(self.run_counter % 2 == 1);
+      assert!(cntr % 2 == 0);
     }
 
     self.local_clock = global.global_clock.load(Ordering::SeqCst);
@@ -324,9 +324,9 @@ impl<T: RluBounds> RluThread<T> {
 
   fn unlock(&mut self) {
     log!(self, "unlock");
-    self.run_counter += 1;
+    let cntr = self.run_counter.fetch_add(1, Ordering::SeqCst);
     if cfg!(debug_assertions) {
-      assert!(self.run_counter % 2 == 0);
+      assert!(cntr % 2 == 1);
     }
 
     if self.is_writer {
@@ -372,10 +372,11 @@ impl<T: RluBounds> RluThread<T> {
 
   fn synchronize(&mut self) {
     log!(self, "synchronize");
+
     let global = unsafe { &*self.global };
     let num_threads = global.num_threads.load(Ordering::SeqCst);
     let run_counts: Vec<usize> = (0..num_threads)
-      .map(|i| global.threads[i].run_counter)
+      .map(|i| global.threads[i].run_counter.load(Ordering::SeqCst))
       .collect();
 
     for i in 0..num_threads {
@@ -385,10 +386,10 @@ impl<T: RluBounds> RluThread<T> {
 
       let thread = &global.threads[i];
       loop {
-        log!(self, format!("wait on thread {}: rc {}, counter {}, write clock {}, local clock {}", i, run_counts[i], thread.run_counter, self.write_clock, thread.local_clock));
+        log!(self, format!("wait on thread {}: rc {}, counter {}, write clock {}, local clock {}", i, run_counts[i], thread.run_counter.load(Ordering::SeqCst), self.write_clock, thread.local_clock));
 
         if run_counts[i] % 2 == 0
-          || thread.run_counter != run_counts[i]
+          || thread.run_counter.load(Ordering::SeqCst) != run_counts[i]
           || self.write_clock <= thread.local_clock
         {
           break;
@@ -401,8 +402,10 @@ impl<T: RluBounds> RluThread<T> {
 
   fn abort(&mut self) {
     log!(self, "abort");
-    self.run_counter += 1;
-    assert!(self.run_counter % 2 == 0);
+    let cntr = self.run_counter.fetch_add(1, Ordering::SeqCst);
+    if cfg!(debug_assertions) {
+      assert!(cntr % 2 == 1);
+    }
 
     if self.is_writer {
       self.unlock_write_log();
