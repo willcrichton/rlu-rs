@@ -3,7 +3,7 @@
 extern crate rand;
 extern crate test;
 
-use rand::{thread_rng, Rng};
+use rand::{rngs::SmallRng, SeedableRng, Rng};
 use rlu::RluList;
 use std::thread;
 use std::time::Instant;
@@ -35,7 +35,7 @@ fn ll_readwrite(ll: RluList<usize>, opts: BenchOpts) -> BenchResult {
   let worker = || {
     let mut ll = ll.clone();
     thread::spawn(move || {
-      let mut rng = thread_rng();
+      let mut rng = SmallRng::from_seed([0; 16]);
       let mut result = BenchResult::default();
       let start = Instant::now();
       loop {
@@ -106,7 +106,7 @@ fn benchmark() {
       let ops: Vec<_> = (0..opts.num_iters)
         .map(|_| {
           let mut ll = RluList::new();
-          let mut rng = thread_rng();
+          let mut rng = SmallRng::from_seed([0; 16]);
           while ll.len() < opts.initial_size {
             let i = rng.gen_range(0, opts.range);
             ll.insert(i);
