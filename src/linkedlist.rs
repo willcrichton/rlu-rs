@@ -167,21 +167,18 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
 
     let new = if let Some((next, next_node)) = next_opt {
       let new_ptr = lock.try_lock(new).expect("Try lock failed");
-      lock.assign_ptr(
-        unsafe { (*new_ptr).next.get_or_insert(RluObject(ptr::null_mut())) },
-        next,
-      );
-
+      unsafe {
+        (*new_ptr).next = Some(next);
+      }
       new
     } else {
       self.rlu.alloc(RluListNode { value, next: None })
     };
 
     if let Some((prev, prev_node)) = prev_opt {
-      lock.assign_ptr(
-        unsafe { (*prev_node).next.get_or_insert(RluObject(ptr::null_mut())) },
-        new,
-      );
+      unsafe {
+        (*prev_node).next = Some(new);
+      }
     } else {
       unsafe {
         (*head_node.unwrap()).next = Some(new);
@@ -198,12 +195,9 @@ impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
     if let Some((prev, prev_node)) = prev_opt {
       if let Some((_, next_node)) = next_opt {
         if let Some(next2) = unsafe { (*next_node).next } {
-          lock.assign_ptr(
-            unsafe {
-              (*prev_node).next.get_or_insert(RluObject(ptr::null_mut()))
-            },
-            next2,
-          );
+          unsafe {
+            (*prev_node).next = Some(next2);
+          }
         } else {
           unsafe {
             (*prev_node).next = None;
