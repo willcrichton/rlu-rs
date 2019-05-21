@@ -2,7 +2,6 @@
 
 use crate::rlu::{Rlu, RluBounds, RluObject, RluSession, RluThread};
 use std::mem;
-use std::ptr;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy)]

@@ -2,6 +2,7 @@
 
 use std::fmt::Debug;
 use std::mem;
+use std::ptr;
 use std::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use std::thread;
 use std::usize;
