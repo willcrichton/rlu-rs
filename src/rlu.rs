@@ -140,7 +140,6 @@ macro_rules! log {
 }
 
 impl<'a, T: RluBounds> RluSession<'a, T> {
-  #[inline(never)]
   pub fn dereference(&mut self, obj: RluObject<T>) -> *const T {
     log!(self.t, "dereference");
     let global = unsafe { &*self.t.global };
