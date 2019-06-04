@@ -10,14 +10,14 @@ use rlu::Rlu;
 fn basic_single() {
   let rlu: Arc<Rlu<u64>> = Arc::new(Rlu::new());
   let mut obj = rlu.alloc(3);
-  let thread = rlu.make_thread();
+  let thread = rlu.thread();
 
   {
-    let mut lock = thread.lock();
+    let mut lock = thread.session();
 
     // Object should have original value after first deref
     {
-      let n = lock.dereference(obj);
+      let n = lock.read_lock(obj);
       unsafe {
         assert_eq!(*n, 3);
       }
@@ -26,7 +26,7 @@ fn basic_single() {
     // Object should still have same value, but now it's safe to write
     // We should have a copy at this point
     {
-      let n = lock.try_lock(obj).unwrap();
+      let n = lock.write_lock(obj).unwrap();
       unsafe {
         assert_eq!(*n, 3);
         *n += 1;
@@ -36,7 +36,7 @@ fn basic_single() {
     // Subsequent derefs in same thread should refer to the copy, observing
     // the new value
     {
-      let n = lock.dereference(obj);
+      let n = lock.read_lock(obj);
       unsafe {
         assert_eq!(*n, 4);
       }
@@ -45,11 +45,11 @@ fn basic_single() {
 
   {
     // Start a new session
-    let mut lock = thread.lock();
+    let mut lock = thread.session();
 
     // Read should observed flushed change
     {
-      let n = lock.dereference(obj);
+      let n = lock.read_lock(obj);
       unsafe {
         assert_eq!(*n, 4);
       }
@@ -62,15 +62,15 @@ fn basic_overlapping_reader_writer() {
   let rlu: Arc<Rlu<u64>> = Arc::new(Rlu::new());
   let mut obj = rlu.alloc(3);
 
-  let thread0 = rlu.make_thread();
-  let thread1 = rlu.make_thread();
+  let thread0 = rlu.thread();
+  let thread1 = rlu.thread();
 
   {
-    let mut lock1 = thread1.lock();
-    let mut lock0 = thread0.lock();
+    let mut lock1 = thread1.session();
+    let mut lock0 = thread0.session();
 
     {
-      let n1: *const u64 = lock0.dereference(obj);
+      let n1: *const u64 = lock0.read_lock(obj);
       unsafe {
         assert_eq!(*n1, 3);
       }
@@ -78,7 +78,7 @@ fn basic_overlapping_reader_writer() {
 
     // Thread 1 should be working on a copy
     {
-      let n2: *mut u64 = lock1.try_lock(obj).unwrap();
+      let n2: *mut u64 = lock1.write_lock(obj).unwrap();
       unsafe {
         assert_eq!(*n2, 3);
         *n2 += 1;
@@ -87,7 +87,7 @@ fn basic_overlapping_reader_writer() {
 
     // Thread 0 should be working on the original
     {
-      let n1: *const u64 = lock0.dereference(obj);
+      let n1: *const u64 = lock0.read_lock(obj);
       unsafe {
         assert_eq!(*n1, 3);
       }
@@ -96,9 +96,9 @@ fn basic_overlapping_reader_writer() {
     // Thread 0 exits, allowing thread 1 to flush writes
   }
 
-  let mut lock = thread0.lock();
+  let mut lock = thread0.session();
   unsafe {
-    assert_eq!(*lock.dereference(obj), 4);
+    assert_eq!(*lock.read_lock(obj), 4);
   }
 }
 
@@ -110,11 +110,11 @@ fn basic_thread() {
   let reader = |id: u64| {
     let rlu = rlu.clone();
     thread::spawn(move || {
-      let thr = rlu.make_thread();
+      let thr = rlu.thread();
 
       for _ in 0..100 {
-        let mut lock = thr.lock();
-        let n = lock.dereference(obj);
+        let mut lock = thr.session();
+        let n = lock.read_lock(obj);
         let x = unsafe { *n };
         thread::sleep(time::Duration::from_millis(10));
         assert_eq!(unsafe { *n }, x);
@@ -127,15 +127,15 @@ fn basic_thread() {
   let writer = |id: u64| {
     let rlu = rlu.clone();
     thread::spawn(move || {
-      let thr = rlu.make_thread();
+      let thr = rlu.thread();
 
       for i in 0..1000 {
         // if i % 100 == 0 {
         //   println!("{}: {}", id, i);
         // }
         loop {
-          let mut lock = thr.lock();
-          if let Some(n) = lock.try_lock(obj) {
+          let mut lock = thr.session();
+          if let Some(n) = lock.write_lock(obj) {
             unsafe {
               *n += 1;
             }
@@ -164,7 +164,7 @@ fn basic_thread() {
     t.join().expect("Writer panicked");
   }
 
-  let thr = rlu.make_thread();
-  let mut lock = thr.lock();
-  assert_eq!(unsafe { *lock.dereference(obj) }, 1000 * num_writers);
+  let thr = rlu.thread();
+  let mut lock = thr.session();
+  assert_eq!(unsafe { *lock.read_lock(obj) }, 1000 * num_writers);
 }

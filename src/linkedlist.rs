@@ -27,7 +27,7 @@ impl<T: RluBounds + PartialEq + PartialOrd + Copy> RluList<T> {
         value: unsafe { mem::uninitialized() },
         next: None,
       }),
-      thread: rlu.make_thread() as *mut RluThread<RluListNode<T>>,
+      thread: rlu.thread() as *mut RluThread<RluListNode<T>>,
       rlu,
     }
   }
@@ -41,7 +41,7 @@ impl<T: RluBounds + PartialEq + PartialOrd + Copy> RluList<T> {
     Option<RluObject<RluListNode<T>>>,
   ) {
     let mut prev = &None;
-    let mut next = &unsafe { (*lock.dereference(self.head)).next };
+    let mut next = &unsafe { (*lock.read_lock(self.head)).next };
 
     loop {
       match next {
@@ -49,7 +49,7 @@ impl<T: RluBounds + PartialEq + PartialOrd + Copy> RluList<T> {
           break;
         }
         Some(next_ref) => {
-          let node = lock.dereference(*next_ref);
+          let node = lock.read_lock(*next_ref);
           if unsafe { (*node).value } >= value {
             break;
           }
@@ -74,11 +74,11 @@ impl<T: RluBounds + PartialEq + PartialOrd + Copy> RluList<T> {
     RluSession<'a, RluListNode<T>>,
   )> {
     loop {
-      let mut lock = unsafe { (*self.thread).lock() };
+      let mut lock = unsafe { (*self.thread).session() };
       let (prev, next) = self.find(&mut lock, value);
 
       if let Some(next) = next {
-        let found = unsafe { (*lock.dereference(next)).value } == value;
+        let found = unsafe { (*lock.read_lock(next)).value } == value;
         if (return_if_found && found) || (!return_if_found && !found) {
           return None;
         }
@@ -87,7 +87,7 @@ impl<T: RluBounds + PartialEq + PartialOrd + Copy> RluList<T> {
       }
 
       let (head_node, prev_node) = if let Some(prev) = prev {
-        match lock.try_lock(prev) {
+        match lock.write_lock(prev) {
           Some(prev_node) => (None, Some(prev_node)),
           None => {
             lock.abort();
@@ -95,7 +95,7 @@ impl<T: RluBounds + PartialEq + PartialOrd + Copy> RluList<T> {
           }
         }
       } else {
-        match lock.try_lock(self.head) {
+        match lock.write_lock(self.head) {
           Some(head_node) => (Some(head_node), None),
           None => {
             lock.abort();
@@ -105,7 +105,7 @@ impl<T: RluBounds + PartialEq + PartialOrd + Copy> RluList<T> {
       };
 
       let next_node = if let Some(next) = next {
-        match lock.try_lock(next) {
+        match lock.write_lock(next) {
           Some(next_node) => Some(next_node),
           None => {
             lock.abort();
@@ -126,10 +126,10 @@ impl<T: RluBounds + PartialEq + PartialOrd + Copy> RluList<T> {
   }
 
   pub fn contains(&self, value: T) -> Option<()> {
-    let mut lock = unsafe { (*self.thread).lock() };
+    let mut lock = unsafe { (*self.thread).session() };
     let (_, head) = self.find(&mut lock, value);
     head.and_then(|head_ref| {
-      if unsafe { *lock.dereference(head_ref) }.value == value {
+      if unsafe { *lock.read_lock(head_ref) }.value == value {
         Some(())
       } else {
         None
@@ -138,8 +138,8 @@ impl<T: RluBounds + PartialEq + PartialOrd + Copy> RluList<T> {
   }
 
   pub fn len(&self) -> usize {
-    let mut lock = unsafe { (*self.thread).lock() };
-    let mut cur = &unsafe { (*lock.dereference(self.head)).next };
+    let mut lock = unsafe { (*self.thread).session() };
+    let mut cur = &unsafe { (*lock.read_lock(self.head)).next };
     let mut i = 0;
 
     loop {
@@ -148,7 +148,7 @@ impl<T: RluBounds + PartialEq + PartialOrd + Copy> RluList<T> {
           break;
         }
         Some(cur_ref) => {
-          let node = lock.dereference(*cur_ref);
+          let node = lock.read_lock(*cur_ref);
           i += 1;
           cur = unsafe { &(*node).next };
         }
@@ -165,7 +165,7 @@ impl<T: RluBounds + PartialEq + PartialOrd + Copy> RluList<T> {
     let new = self.rlu.alloc(RluListNode { value, next: None });
 
     let new = if let Some((next, next_node)) = next_opt {
-      let new_ptr = lock.try_lock(new).expect("Try lock failed");
+      let new_ptr = lock.write_lock(new).expect("Try lock failed");
       unsafe {
         (*new_ptr).next = Some(next);
       }
@@ -224,8 +224,8 @@ impl<T: RluBounds + PartialEq + PartialOrd + Copy> RluList<T> {
   }
 
   pub fn to_string(&self) -> String {
-    let mut lock = unsafe { (*self.thread).lock() };
-    let mut cur = &unsafe { (*lock.dereference(self.head)).next };
+    let mut lock = unsafe { (*self.thread).session() };
+    let mut cur = &unsafe { (*lock.read_lock(self.head)).next };
     let mut s = String::new();
 
     loop {
@@ -234,7 +234,7 @@ impl<T: RluBounds + PartialEq + PartialOrd + Copy> RluList<T> {
           break;
         }
         Some(cur_ref) => {
-          let node = lock.dereference(*cur_ref);
+          let node = lock.read_lock(*cur_ref);
           s += &format!(" --> {:?}", unsafe { *node });
           cur = unsafe { &(*node).next };
         }
@@ -249,7 +249,7 @@ impl<T: RluBounds> Clone for RluList<T> {
   fn clone(&self) -> Self {
     RluList {
       head: self.head,
-      thread: self.rlu.make_thread(),
+      thread: self.rlu.thread(),
       rlu: self.rlu.clone(),
     }
   }

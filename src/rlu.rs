@@ -102,7 +102,7 @@ impl<T: RluBounds> Rlu<T> {
     }
   }
 
-  pub fn make_thread(&self) -> &mut RluThread<T> {
+  pub fn thread(&self) -> &mut RluThread<T> {
     let thread_id = self.num_threads.fetch_add(1, Ordering::SeqCst);
     let thread: *mut RluThread<T> =
       &self.threads[thread_id] as *const RluThread<T> as *mut RluThread<T>;
@@ -136,7 +136,7 @@ macro_rules! log {
 }
 
 impl<'a, T: RluBounds> RluSession<'a, T> {
-  pub fn dereference(&mut self, obj: RluObject<T>) -> *const T {
+  pub fn read_lock(&mut self, obj: RluObject<T>) -> *const T {
     log!(self.t, "dereference");
     let global = unsafe { &*self.t.global };
     let orig = obj.deref();
@@ -170,7 +170,7 @@ impl<'a, T: RluBounds> RluSession<'a, T> {
     }
   }
 
-  pub fn try_lock(&mut self, mut obj: RluObject<T>) -> Option<*mut T> {
+  pub fn write_lock(&mut self, mut obj: RluObject<T>) -> Option<*mut T> {
     log!(self.t, format!("try_lock"));
     let global = unsafe { &*self.t.global };
     self.t.is_writer = true;
@@ -250,7 +250,7 @@ impl<T: RluBounds> RluThread<T> {
     thread
   }
 
-  pub fn lock<'a>(&'a mut self) -> RluSession<'a, T> {
+  pub fn session<'a>(&'a mut self) -> RluSession<'a, T> {
     log!(self, "lock");
     let global = unsafe { &*self.global };
     let cntr = self.run_counter.fetch_add(1, Ordering::SeqCst);
