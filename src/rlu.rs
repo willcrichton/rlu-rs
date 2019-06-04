@@ -77,8 +77,8 @@ pub struct RluSession<'a, T: RluBounds> {
   abort: bool,
 }
 
-pub trait RluBounds: Copy + Debug {}
-impl<T: Copy + Debug> RluBounds for T {}
+pub trait RluBounds: Clone + Debug {}
+impl<T: Clone + Debug> RluBounds for T {}
 
 impl<T> WriteLog<T> {
   fn next_entry(&mut self) -> &mut ObjCopy<T> {
@@ -192,7 +192,7 @@ impl<'a, T: RluBounds> RluSession<'a, T> {
     let active_log = &mut self.t.logs[self.t.current_log];
     let copy = active_log.next_entry();
     copy.thread_id = self.t.thread_id;
-    copy.data = obj.deref().data;
+    copy.data = obj.deref().data.clone();
     copy.original = obj;
     let prev_ptr = obj.deref_mut().copy.compare_and_swap(
       ptr::null_mut(),
@@ -320,7 +320,7 @@ impl<T: RluBounds> RluThread<T> {
       let copy = &mut active_log.entries[i];
       log!(self, format!("copy {:?} ({:p})", copy.data, &copy.data));
       let orig = copy.original.deref_mut();
-      orig.data = copy.data;
+      orig.data = copy.data.clone();
     }
   }
 

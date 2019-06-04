@@ -19,7 +19,7 @@ pub struct RluList<T> {
 unsafe impl<T> Send for RluList<T> {}
 unsafe impl<T> Sync for RluList<T> {}
 
-impl<T: RluBounds + PartialEq + PartialOrd> RluList<T> {
+impl<T: RluBounds + PartialEq + PartialOrd + Copy> RluList<T> {
   pub fn new() -> RluList<T> {
     let rlu = Arc::new(Rlu::new());
     RluList {
